@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import BottomNav from '../components/BottomNav'
 import AddExpenseModal from '../components/AddExpenseModal'
 import ExpenseDetailSheet from '../components/ExpenseDetailSheet'
+import { useNavigate } from 'react-router-dom'
 
 const CATEGORY_COLORS = {
   Food:          '#f97316',
@@ -35,6 +36,7 @@ function formatDate(dateStr) {
 
 export default function DashboardPage() {
   const { user } = useAuth()
+  const navigate = useNavigate()
   const [expenses, setExpenses]   = useState([])
   const [showModal, setShowModal] = useState(false)
   const [loading, setLoading]     = useState(true)
@@ -69,7 +71,10 @@ export default function DashboardPage() {
 
   // Group amounts by category (across all currencies — for the bar breakdown)
   const byCategory = expenses.reduce((acc, e) => {
-    acc[e.category] = (acc[e.category] || 0) + parseFloat(e.amount)
+  const sym = currencySymbol(e.currency)
+  const key = `${e.category}__${sym}`
+    if (!acc[key]) acc[key] = { category: e.category, symbol: sym, amount: 0 }
+    acc[key].amount += parseFloat(e.amount)
     return acc
   }, {})
 
@@ -114,34 +119,41 @@ export default function DashboardPage() {
         {/* ── Category breakdown ── */}
         {Object.keys(byCategory).length > 0 && (
           <div style={{ marginBottom: '2rem' }}>
-            <h2 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '12px' }}>
-              By category
-            </h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {Object.entries(byCategory)
-                .sort((a, b) => b[1] - a[1])
-                .map(([cat, amt]) => (
-                  <div key={cat}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                      <span style={{ fontSize: '13px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span>{categoryIcon(cat)}</span>
-                        {cat}
-                      </span>
-                      <span style={{ fontSize: '13px', fontWeight: '500' }}>
-                        {amt.toFixed(2)}
-                      </span>
-                    </div>
-                    <div style={{ height: '6px', backgroundColor: '#f1f5f9', borderRadius: '99px' }}>
-                      <div style={{
-                        height: '100%',
-                        width: grandTotal > 0 ? `${(amt / grandTotal) * 100}%` : '0%',
-                        backgroundColor: CATEGORY_COLORS[cat] || '#94a3b8',
-                        borderRadius: '99px',
-                        transition: 'width 0.4s ease',
-                      }} />
-                    </div>
+              {Object.keys(byCategory).length > 0 && (
+                <div style={{ marginBottom: '2rem' }}>
+                  <h2 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '12px' }}>
+                    By category
+                  </h2>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {Object.values(byCategory)
+                      .sort((a, b) => b.amount - a.amount)
+                      .map(({ category, symbol, amount }) => (
+                        <div key={`${category}__${symbol}`}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                            <span style={{ fontSize: '13px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span>{categoryIcon(category)}</span>
+                              {category}
+                              <span style={{ fontSize: '11px', color: '#94a3b8' }}>{symbol}</span>
+                            </span>
+                            <span style={{ fontSize: '13px', fontWeight: '500' }}>
+                              {symbol}{amount.toFixed(2)}
+                            </span>
+                          </div>
+                          <div style={{ height: '6px', backgroundColor: '#f1f5f9', borderRadius: '99px' }}>
+                            <div style={{
+                              height: '100%',
+                              width: grandTotal > 0 ? `${(amount / grandTotal) * 100}%` : '0%',
+                              backgroundColor: CATEGORY_COLORS[category] || '#94a3b8',
+                              borderRadius: '99px',
+                              transition: 'width 0.4s ease',
+                            }} />
+                          </div>
+                        </div>
+                      ))}
                   </div>
-                ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -217,7 +229,7 @@ export default function DashboardPage() {
               textAlign: 'center', marginTop: '16px',
               fontSize: '13px', color: '#3b82f6', cursor: 'pointer'
             }}
-              onClick={() => window.location.href = '/expenses'}
+              onClick={() => navigate('/expenses')}
             >
               View all {expenses.length} expenses →
             </p>
