@@ -41,14 +41,16 @@ export default function DashboardPage() {
   const [showModal, setShowModal] = useState(false)
   const [loading, setLoading]     = useState(true)
   const [selectedExpense, setSelectedExpense] = useState(null)
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth())
+  const [selectedYear, setSelectedYear]   = useState(new Date().getFullYear())
 
-  useEffect(() => { fetchExpenses() }, [])
+  useEffect(() => { fetchExpenses() }, [selectedMonth, selectedYear])
 
   async function fetchExpenses() {
     setLoading(true)
-    const startOfMonth = new Date()
-    startOfMonth.setDate(1)
-    startOfMonth.setHours(0, 0, 0, 0)
+
+    const startOfMonth = new Date(selectedYear, selectedMonth, 1)
+    const endOfMonth   = new Date(selectedYear, selectedMonth + 1, 0)
 
     const { data } = await supabase
       .from('expenses')
@@ -56,6 +58,7 @@ export default function DashboardPage() {
       .eq('paid_by', user.id)
       .eq('is_personal', true)
       .gte('date', startOfMonth.toISOString().split('T')[0])
+      .lte('date', endOfMonth.toISOString().split('T')[0])
       .order('date', { ascending: false })
 
     setExpenses(data || [])
@@ -85,34 +88,65 @@ export default function DashboardPage() {
 
       {/* ── Header ── */}
       <div style={{
-        padding: '3rem 1.5rem 1.5rem',
-        backgroundColor: '#0f172a',
-        color: 'white',
-      }}>
-        <p style={{ fontSize: '13px', opacity: 0.6, marginBottom: '4px' }}>
-          {new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}
-        </p>
-        <p style={{ fontSize: '13px', opacity: 0.6 }}>Total spent</p>
+          padding: '3rem 1.5rem 1.5rem',
+          backgroundColor: '#0f172a',
+          color: 'white',
+        }}>
+          {/* Month + Year selectors */}
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '1rem' }}>
+            <select
+              value={selectedMonth}
+              onChange={e => setSelectedMonth(Number(e.target.value))}
+              style={{
+                padding: '6px 10px',
+                backgroundColor: 'rgba(255,255,255,0.1)',
+                border: '1px solid rgba(255,255,255,0.2)',
+                borderRadius: '8px', fontSize: '13px',
+                color: 'white', outline: 'none',
+              }}
+            >
+              {['January','February','March','April','May','June',
+                'July','August','September','October','November','December'
+              ].map((m, i) => (
+                <option key={m} value={i} style={{ backgroundColor: '#0f172a' }}>{m}</option>
+              ))}
+            </select>
 
-        {/* One line per currency */}
-        {Object.entries(totalsByCurrency).map(([sym, amt]) => (
-          <h1 key={sym} style={{ fontSize: '40px', fontWeight: '700', margin: '4px 0 0', lineHeight: 1.1 }}>
-            {sym}{amt.toFixed(2)}
-          </h1>
-        ))}
+            <select
+              value={selectedYear}
+              onChange={e => setSelectedYear(Number(e.target.value))}
+              style={{
+                padding: '6px 10px',
+                backgroundColor: 'rgba(255,255,255,0.1)',
+                border: '1px solid rgba(255,255,255,0.2)',
+                borderRadius: '8px', fontSize: '13px',
+                color: 'white', outline: 'none',
+              }}
+            >
+              {[2024, 2025, 2026, 2027].map(y => (
+                <option key={y} value={y} style={{ backgroundColor: '#0f172a' }}>{y}</option>
+              ))}
+            </select>
+          </div>
 
-        {/* Fallback when no expenses yet */}
-        {Object.keys(totalsByCurrency).length === 0 && (
-          <h1 style={{ fontSize: '40px', fontWeight: '700', margin: '4px 0 0' }}>
-            €0.00
-          </h1>
-        )}
+          <p style={{ fontSize: '13px', opacity: 0.6 }}>Total spent</p>
 
-        {/* Count */}
-        <p style={{ fontSize: '12px', opacity: 0.5, marginTop: '8px' }}>
-          {expenses.length} expense{expenses.length !== 1 ? 's' : ''} this month
-        </p>
-      </div>
+          {Object.entries(totalsByCurrency).map(([sym, amt]) => (
+            <h1 key={sym} style={{ fontSize: '40px', fontWeight: '700', margin: '4px 0 0', lineHeight: 1.1 }}>
+              {sym}{amt.toFixed(2)}
+            </h1>
+          ))}
+
+          {Object.keys(totalsByCurrency).length === 0 && (
+            <h1 style={{ fontSize: '40px', fontWeight: '700', margin: '4px 0 0' }}>
+              €0.00
+            </h1>
+          )}
+
+          <p style={{ fontSize: '12px', opacity: 0.5, marginTop: '8px' }}>
+            {expenses.length} expense{expenses.length !== 1 ? 's' : ''} this month
+          </p>
+        </div>
 
       <div style={{ padding: '1.5rem' }}>
 
