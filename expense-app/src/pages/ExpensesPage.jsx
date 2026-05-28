@@ -370,7 +370,7 @@ export default function ExpensesPage() {
           expense={selectedExpense}
           onClose={() => setSelectedExpense(null)}
           onDeleted={fetchExpenses}
-          onEdited={() => setSelectedExpense(null)}
+          onEdited={() => {setSelectedExpense(null); fetchExpenses()}}
         />
       )}
 

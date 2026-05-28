@@ -306,9 +306,8 @@ export default function DashboardPage() {
           onClose={() => setSelectedExpense(null)}
           onDeleted={fetchExpenses}
           onEdited={(expense) => {
-            // We'll wire up edit properly in a later step
-            // For now just close the sheet
-            setSelectedExpense(null)
+            setSelectedExpense(null);
+            fetchExpenses()
           }}
         />
       )}
