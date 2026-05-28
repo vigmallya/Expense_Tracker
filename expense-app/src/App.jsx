@@ -5,6 +5,7 @@ import ExpensesPage from './pages/ExpensesPage'
 import GroupsPage from './pages/GroupsPage'
 import ProfilePage from './pages/ProfilePage'
 import ProtectedRoute from './components/ProtectedRoute'
+import GroupDetailPage from './pages/GroupDetailPage'
 
 function App() {
   return (
@@ -15,6 +16,8 @@ function App() {
       <Route path="/expenses"  element={<ProtectedRoute><ExpensesPage /></ProtectedRoute>} />
       <Route path="/groups"    element={<ProtectedRoute><GroupsPage /></ProtectedRoute>} />
       <Route path="/profile"   element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+      <Route path="/groups"     element={<ProtectedRoute><GroupsPage /></ProtectedRoute>} />
+      <Route path="/groups/:id" element={<ProtectedRoute><GroupDetailPage /></ProtectedRoute>} />
 
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
     </Routes>
