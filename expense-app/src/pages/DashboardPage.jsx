@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import BottomNav from '../components/BottomNav'
 import AddExpenseModal from '../components/AddExpenseModal'
 import ExpenseDetailSheet from '../components/ExpenseDetailSheet'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 
 const CATEGORY_COLORS = {
   Food:          '#f97316',
@@ -43,8 +43,12 @@ export default function DashboardPage() {
   const [selectedExpense, setSelectedExpense] = useState(null)
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth())
   const [selectedYear, setSelectedYear]   = useState(new Date().getFullYear())
+  const [budgets, setBudgets] = useState([])
 
-  useEffect(() => { fetchExpenses() }, [selectedMonth, selectedYear])
+  useEffect(() => { 
+    fetchExpenses()
+    fetchBudgets()
+   }, [selectedMonth, selectedYear])
 
   async function fetchExpenses() {
     setLoading(true)
@@ -63,6 +67,18 @@ export default function DashboardPage() {
 
     setExpenses(data || [])
     setLoading(false)
+  }
+
+    // Fetch budget function 
+    async function fetchBudgets() {
+    const now = new Date()
+    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+    const { data } = await supabase
+      .from('budgets')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('month', monthKey)
+    setBudgets(data || [])
   }
 
   // Group totals by currency symbol — ₹, €, $ shown separately
@@ -85,12 +101,10 @@ export default function DashboardPage() {
 
   return (
     <div style={{ paddingBottom: '90px' }}>
-
       {/* ── Header ── */}
-      <div style={{
+        <div style={{
           padding: '3rem 1.5rem 1.5rem',
-          backgroundColor: '#0f172a',
-          color: 'white',
+          backgroundColor: '#0f172a', color: 'white',
         }}>
           {/* Month + Year selectors */}
           <div style={{ display: 'flex', gap: '8px', marginBottom: '1rem' }}>
@@ -111,7 +125,6 @@ export default function DashboardPage() {
                 <option key={m} value={i} style={{ backgroundColor: '#0f172a' }}>{m}</option>
               ))}
             </select>
-
             <select
               value={selectedYear}
               onChange={e => setSelectedYear(Number(e.target.value))}
@@ -138,9 +151,7 @@ export default function DashboardPage() {
           ))}
 
           {Object.keys(totalsByCurrency).length === 0 && (
-            <h1 style={{ fontSize: '40px', fontWeight: '700', margin: '4px 0 0' }}>
-              €0.00
-            </h1>
+            <h1 style={{ fontSize: '40px', fontWeight: '700', margin: '4px 0 0' }}>€0.00</h1>
           )}
 
           <p style={{ fontSize: '12px', opacity: 0.5, marginTop: '8px' }}>
@@ -148,128 +159,161 @@ export default function DashboardPage() {
           </p>
         </div>
 
-      <div style={{ padding: '1.5rem' }}>
+        <div style={{ padding: '1.5rem' }}>
 
-        {/* ── Category breakdown ── */}
-        {Object.keys(byCategory).length > 0 && (
-          <div style={{ marginBottom: '2rem' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {Object.keys(byCategory).length > 0 && (
-                <div style={{ marginBottom: '2rem' }}>
-                  <h2 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '12px' }}>
-                    By category
-                  </h2>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {Object.values(byCategory)
-                      .sort((a, b) => b.amount - a.amount)
-                      .map(({ category, symbol, amount }) => (
-                        <div key={`${category}__${symbol}`}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                            <span style={{ fontSize: '13px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <span>{categoryIcon(category)}</span>
-                              {category}
-                              <span style={{ fontSize: '11px', color: '#94a3b8' }}>{symbol}</span>
-                            </span>
-                            <span style={{ fontSize: '13px', fontWeight: '500' }}>
-                              {symbol}{amount.toFixed(2)}
-                            </span>
-                          </div>
+          {/* ── Budget card — fixed position, always first ── */}
+          <div
+            onClick={() => navigate('/budget')}
+            style={{
+              padding: '14px 16px', backgroundColor: 'white',
+              borderRadius: '12px', border: '1px solid #f1f5f9',
+              cursor: 'pointer', marginBottom: '1.5rem',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}
+          >
+            <div>
+              <p style={{ fontSize: '13px', fontWeight: '600', marginBottom: '4px' }}>
+                📊 Monthly budget
+              </p>
+              <p style={{ fontSize: '12px', color: '#94a3b8' }}>
+                {budgets.length > 0
+                  ? `${budgets.length} categor${budgets.length === 1 ? 'y' : 'ies'} · €${budgets.reduce((s, b) => s + parseFloat(b.monthly_limit), 0).toFixed(2)} budgeted`
+                  : 'Tap to set your budgets'
+                }
+              </p>
+            </div>
+            <span style={{ fontSize: '18px', color: '#94a3b8' }}>›</span>
+          </div>
+
+          {/* ── Category breakdown with budget limits ── */}
+          {Object.keys(byCategory).length > 0 && (
+            <div style={{ marginBottom: '2rem' }}>
+              <h2 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '12px' }}>
+                By category
+              </h2>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {Object.values(byCategory)
+                  .sort((a, b) => b.amount - a.amount)
+                  .map(({ category, symbol, amount }) => {
+                    const budget  = budgets.find(b => b.category === category)
+                    const limit   = budget ? parseFloat(budget.monthly_limit) : 0
+                    const percent = limit > 0 ? Math.min((amount / limit) * 100, 100) : 0
+                    const over    = limit > 0 && amount > limit
+
+                    return (
+                      <div key={`${category}__${symbol}`}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                          <span style={{ fontSize: '13px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span>{categoryIcon(category)}</span>
+                            {category}
+                            <span style={{ fontSize: '11px', color: '#94a3b8' }}>{symbol}</span>
+                          </span>
+                          <span style={{ fontSize: '13px', fontWeight: '500', color: over ? '#dc2626' : '#0f172a' }}>
+                            {symbol}{amount.toFixed(2)}
+                            {limit > 0 && (
+                              <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '400' }}>
+                                {' '}/ {symbol}{limit.toFixed(2)}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                        {limit > 0 ? (
+                          <>
+                            <div style={{ height: '6px', backgroundColor: '#f1f5f9', borderRadius: '99px' }}>
+                              <div style={{
+                                height: '100%',
+                                width: `${percent}%`,
+                                backgroundColor: over ? '#dc2626' : percent >= 80 ? '#f59e0b' : CATEGORY_COLORS[category] || '#94a3b8',
+                                borderRadius: '99px',
+                                transition: 'width 0.4s ease',
+                              }} />
+                            </div>
+                            {over && (
+                              <p style={{ fontSize: '11px', color: '#dc2626', marginTop: '2px' }}>
+                                Over by {symbol}{(amount - limit).toFixed(2)}
+                              </p>
+                            )}
+                          </>
+                        ) : (
                           <div style={{ height: '6px', backgroundColor: '#f1f5f9', borderRadius: '99px' }}>
                             <div style={{
                               height: '100%',
                               width: grandTotal > 0 ? `${(amount / grandTotal) * 100}%` : '0%',
                               backgroundColor: CATEGORY_COLORS[category] || '#94a3b8',
                               borderRadius: '99px',
-                              transition: 'width 0.4s ease',
+                              opacity: 0.4,
                             }} />
                           </div>
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ── Recent expenses ── */}
-        <div>
-          <h2 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '12px' }}>
-            Recent
-          </h2>
-
-          {loading && (
-            <p style={{ color: '#94a3b8', fontSize: '14px' }}>Loading...</p>
-          )}
-
-          {!loading && expenses.length === 0 && (
-            <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94a3b8' }}>
-              <p style={{ fontSize: '32px', marginBottom: '8px' }}>💸</p>
-              <p style={{ fontSize: '14px' }}>No expenses this month yet</p>
-              <p style={{ fontSize: '13px', marginTop: '4px' }}>Tap + to add your first one</p>
+                        )}
+                      </div>
+                    )
+                  })}
+              </div>
             </div>
           )}
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {expenses.slice(0, 10).map(expense => (
-              <div key={expense.id}
-                   onClick={() => setSelectedExpense(expense)}
-                   style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '12px',
-                    padding: '12px',
-                    backgroundColor: 'white',
-                    borderRadius: '12px',
-                    border: '1px solid #f1f5f9',
-                    cursor: 'pointer',        // ← add this
+          {/* ── Recent expenses ── */}
+          <div>
+            <h2 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '12px' }}>Recent</h2>
+
+            {loading && <p style={{ color: '#94a3b8', fontSize: '14px' }}>Loading...</p>}
+
+            {!loading && expenses.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94a3b8' }}>
+                <p style={{ fontSize: '32px', marginBottom: '8px' }}>💸</p>
+                <p style={{ fontSize: '14px' }}>No expenses this month yet</p>
+                <p style={{ fontSize: '13px', marginTop: '4px' }}>Tap + to add your first one</p>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {expenses.slice(0, 10).map(expense => (
+                <div
+                  key={expense.id}
+                  onClick={() => setSelectedExpense(expense)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '12px',
+                    padding: '12px', backgroundColor: 'white',
+                    borderRadius: '12px', border: '1px solid #f1f5f9',
+                    cursor: 'pointer',
                   }}
                 >
-                {/* Category icon circle */}
-                <div style={{
-                  width: '40px', height: '40px',
-                  borderRadius: '10px', flexShrink: 0,
-                  backgroundColor: (CATEGORY_COLORS[expense.category] || '#94a3b8') + '20',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: '18px',
-                }}>
-                  {categoryIcon(expense.category)}
-                </div>
-
-                {/* Title + meta */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{
-                    fontSize: '14px', fontWeight: '500',
-                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
+                  <div style={{
+                    width: '40px', height: '40px', borderRadius: '10px', flexShrink: 0,
+                    backgroundColor: (CATEGORY_COLORS[expense.category] || '#94a3b8') + '20',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '18px',
                   }}>
-                    {expense.title}
-                  </p>
-                  <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>
-                    {expense.category} · {formatDate(expense.date)}
+                    {categoryIcon(expense.category)}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{
+                      fontSize: '14px', fontWeight: '500',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
+                    }}>
+                      {expense.title}
+                    </p>
+                    <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>
+                      {expense.category} · {formatDate(expense.date)}
+                    </p>
+                  </div>
+                  <p style={{ fontSize: '15px', fontWeight: '600', flexShrink: 0 }}>
+                    {currencySymbol(expense.currency)}{parseFloat(expense.amount).toFixed(2)}
                   </p>
                 </div>
+              ))}
+            </div>
 
-                {/* Amount + currency */}
-                <p style={{ fontSize: '15px', fontWeight: '600', flexShrink: 0 }}>
-                  {currencySymbol(expense.currency)}{parseFloat(expense.amount).toFixed(2)}
-                </p>
-              </div>
-            ))}
+            {expenses.length > 10 && (
+              <p
+                style={{ textAlign: 'center', marginTop: '16px', fontSize: '13px', color: '#3b82f6', cursor: 'pointer' }}
+                onClick={() => navigate('/expenses')}
+              >
+                View all {expenses.length} expenses →
+              </p>
+            )}
           </div>
-
-          {/* Show more link if there are more than 10 */}
-          {expenses.length > 10 && (
-            <p style={{
-              textAlign: 'center', marginTop: '16px',
-              fontSize: '13px', color: '#3b82f6', cursor: 'pointer'
-            }}
-              onClick={() => navigate('/expenses')}
-            >
-              View all {expenses.length} expenses →
-            </p>
-          )}
         </div>
-      </div>
 
       {/* ── Floating add button ── */}
       <button
