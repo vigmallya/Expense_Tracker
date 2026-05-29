@@ -16,6 +16,12 @@ export default function ProfilePage() {
   const [stats, setStats]                 = useState({ expenses: 0, groups: 0, totalSpent: {} })
   const [loading, setLoading]             = useState(true)
   const [saveSuccess, setSaveSuccess]     = useState(false)
+  const [changingPassword, setChangingPassword] = useState(false)
+  const [newPassword, setNewPassword]           = useState('')
+  const [confirmPassword, setConfirmPassword]   = useState('')
+  const [passwordError, setPasswordError]       = useState('')
+  const [passwordSuccess, setPasswordSuccess]   = useState(false)
+  const [savingPassword, setSavingPassword]     = useState(false)
 
   useEffect(() => { fetchProfile(); fetchStats() }, [])
 
@@ -32,6 +38,38 @@ export default function ProfilePage() {
       setPreferredCurrency(data.preferred_currency || 'EUR')
     }
     setLoading(false)
+  }
+  async function handleChangePassword() {
+    setPasswordError('')
+    setPasswordSuccess(false)
+
+    if (newPassword.length < 6) {
+      setPasswordError('Password must be at least 6 characters')
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Passwords do not match')
+      return
+    }
+
+    setSavingPassword(true)
+
+    const { error } = await supabase.auth.updateUser({
+      password: newPassword
+    })
+
+    setSavingPassword(false)
+
+    if (error) {
+      setPasswordError(error.message)
+      return
+    }
+
+    setPasswordSuccess(true)
+    setNewPassword('')
+    setConfirmPassword('')
+    setChangingPassword(false)
+    setTimeout(() => setPasswordSuccess(false), 3000)
   }
 
   async function fetchStats() {
@@ -280,6 +318,112 @@ export default function ProfilePage() {
           {saveSuccess && (
             <p style={{ fontSize: '13px', color: '#16a34a', textAlign: 'center', marginTop: '8px' }}>
               ✓ Profile updated
+            </p>
+          )}
+        </div>
+
+        {/* ── Change password ── */}
+        <div style={{
+          padding: '16px', backgroundColor: 'white',
+          borderRadius: '12px', border: '1px solid #f1f5f9',
+          marginBottom: '1.5rem',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: changingPassword ? '16px' : '0' }}>
+            <h2 style={{ fontSize: '15px', fontWeight: '600' }}>Password</h2>
+            {!changingPassword ? (
+              <button
+                onClick={() => setChangingPassword(true)}
+                style={{
+                  padding: '5px 14px', fontSize: '12px', fontWeight: '500',
+                  backgroundColor: '#f1f5f9', border: 'none',
+                  borderRadius: '99px', color: '#64748b',
+                }}
+              >
+                Change
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  setChangingPassword(false)
+                  setNewPassword('')
+                  setConfirmPassword('')
+                  setPasswordError('')
+                }}
+                style={{
+                  padding: '5px 14px', fontSize: '12px',
+                  background: 'none', border: 'none', color: '#94a3b8',
+                }}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+
+          {changingPassword && (
+            <div>
+              {/* New password */}
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ fontSize: '12px', color: '#94a3b8', display: 'block', marginBottom: '6px' }}>
+                  New password
+                </label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                  placeholder="Min 6 characters"
+                  style={{
+                    width: '100%', padding: '10px 12px', fontSize: '14px',
+                    border: '1px solid #e2e8f0', borderRadius: '8px',
+                    outline: 'none', boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+
+              {/* Confirm password */}
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ fontSize: '12px', color: '#94a3b8', display: 'block', marginBottom: '6px' }}>
+                  Confirm password
+                </label>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  placeholder="Repeat new password"
+                  style={{
+                    width: '100%', padding: '10px 12px', fontSize: '14px',
+                    border: '1px solid #e2e8f0', borderRadius: '8px',
+                    outline: 'none', boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+
+              {passwordError && (
+                <p style={{
+                  padding: '10px 12px', backgroundColor: '#fef2f2',
+                  color: '#dc2626', borderRadius: '8px',
+                  fontSize: '13px', marginBottom: '12px',
+                }}>{passwordError}</p>
+              )}
+
+              <button
+                onClick={handleChangePassword}
+                disabled={savingPassword || !newPassword || !confirmPassword}
+                style={{
+                  width: '100%', padding: '11px',
+                  backgroundColor: '#0f172a', color: 'white',
+                  border: 'none', borderRadius: '10px',
+                  fontSize: '14px', fontWeight: '500',
+                  opacity: savingPassword || !newPassword || !confirmPassword ? 0.5 : 1,
+                }}
+              >
+                {savingPassword ? 'Updating...' : 'Update password'}
+              </button>
+            </div>
+          )}
+
+          {passwordSuccess && (
+            <p style={{ fontSize: '13px', color: '#16a34a', marginTop: '8px' }}>
+              ✓ Password updated successfully
             </p>
           )}
         </div>
