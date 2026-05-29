@@ -118,9 +118,12 @@ export default function GroupDetailPage() {
         .in('expense_id', expenseIds)
 
       setSplits(splitData || [])
-    }
+    }else {
+    // No expenses left — clear splits too
+    setSplits([])
   }
-
+  }
+  
   // Delete group — only available to creator
   async function handleDeleteGroup() {
     setDeleting(true)
@@ -903,6 +906,15 @@ export default function GroupDetailPage() {
             handleSettle(settleTarget.from, settleTarget.to, amount)
             setSettleTarget(null)
           }}
+        />
+      )}
+      {editingExpense && (
+        <EditGroupExpenseModal
+          expense={editingExpense}
+          members={members}
+          onClose={() => setEditingExpense(null)}
+          onEdited={() => { setEditingExpense(null); fetchExpenses() }}
+          onDeleted={() => { setEditingExpense(null); fetchExpenses() }}
         />
       )}
     </div>

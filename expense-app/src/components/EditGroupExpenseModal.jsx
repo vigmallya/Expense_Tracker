@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase'
 const CATEGORIES = ['Food', 'Transport', 'Housing', 'Shopping', 'Health', 'Entertainment', 'Other']
 const symbols = { EUR: '€', INR: '₹', USD: '$' }
 
-export default function EditGroupExpenseModal({ expense, members, onClose, onEdited }) {
+export default function EditGroupExpenseModal({ expense, members, onClose, onEdited, onDeleted }) {
   const [title, setTitle]       = useState(expense.title)
   const [amount, setAmount]     = useState(expense.amount)
   const [category, setCategory] = useState(expense.category)
@@ -13,6 +13,21 @@ export default function EditGroupExpenseModal({ expense, members, onClose, onEdi
   const [paidBy, setPaidBy]     = useState(expense.paid_by)
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting]           = useState(false)
+
+  async function handleDelete() {
+    setDeleting(true)
+    const { error } = await supabase
+      .from('expenses')
+      .delete()
+      .eq('id', expense.id)
+
+    setDeleting(false)
+    if (error) { setError(error.message); return }
+    onDeleted()
+    onClose()
+  }
 
   async function handleSave(e) {
     e.preventDefault()
@@ -193,7 +208,60 @@ export default function EditGroupExpenseModal({ expense, members, onClose, onEdi
             }}
           >
             {loading ? 'Saving...' : 'Save changes'}
-          </button>
+            </button>
+            {/* Delete expense — two step confirm */}
+            <div style={{ marginTop: '10px' }}>
+              {!confirmDelete ? (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(true)}
+                  style={{
+                    width: '100%', padding: '13px',
+                    backgroundColor: '#fef2f2', color: '#dc2626',
+                    border: '1px solid #fecaca', borderRadius: '10px',
+                    fontSize: '14px', fontWeight: '500',
+                  }}
+                >
+                  🗑 Delete expense
+                </button>
+              ) : (
+                <div style={{ border: '1px solid #fecaca', borderRadius: '10px', overflow: 'hidden' }}>
+                  <p style={{
+                    padding: '12px', textAlign: 'center', fontSize: '13px',
+                    color: '#dc2626', backgroundColor: '#fef2f2',
+                    borderBottom: '1px solid #fecaca',
+                  }}>
+                    This will delete the expense and all its splits. Cannot be undone.
+                  </p>
+                  <div style={{ display: 'flex' }}>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDelete(false)}
+                      style={{
+                        flex: 1, padding: '12px', background: 'white',
+                        border: 'none', borderRight: '1px solid #fecaca',
+                        fontSize: '14px', color: '#64748b', fontWeight: '500',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDelete}
+                      disabled={deleting}
+                      style={{
+                        flex: 1, padding: '12px', background: 'white',
+                        border: 'none', fontSize: '14px',
+                        color: '#dc2626', fontWeight: '600',
+                        opacity: deleting ? 0.6 : 1,
+                      }}
+                    >
+                      {deleting ? 'Deleting...' : 'Yes, delete'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
         </form>
       </div>
     </div>
