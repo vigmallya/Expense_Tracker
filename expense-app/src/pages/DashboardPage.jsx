@@ -44,12 +44,14 @@ export default function DashboardPage() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth())
   const [selectedYear, setSelectedYear]   = useState(new Date().getFullYear())
   const [budgets, setBudgets] = useState([])
+  const [preferredCurrency, setPreferredCurrency] = useState('EUR')
 
-  useEffect(() => { 
+  useEffect(() => {
     fetchExpenses()
     fetchBudgets()
-   }, [selectedMonth, selectedYear])
-
+    fetchPreferredCurrency()
+  }, [selectedMonth, selectedYear])
+  
   async function fetchExpenses() {
     setLoading(true)
 
@@ -67,6 +69,15 @@ export default function DashboardPage() {
 
     setExpenses(data || [])
     setLoading(false)
+  }
+
+  async function fetchPreferredCurrency() {
+    const { data } = await supabase
+      .from('profiles')
+      .select('preferred_currency')
+      .eq('id', user.id)
+      .single()
+    if (data?.preferred_currency) setPreferredCurrency(data.preferred_currency)
   }
 
     // Fetch budget function 
@@ -195,7 +206,9 @@ export default function DashboardPage() {
                 {Object.values(byCategory)
                   .sort((a, b) => b.amount - a.amount)
                   .map(({ category, symbol, amount }) => {
-                    const budget  = budgets.find(b => b.category === category)
+                    // Only show budget for preferred currency entries
+                    const isPreferred = symbol === currencySymbol(preferredCurrency)
+                    const budget  = isPreferred ? budgets.find(b => b.category === category) : null
                     const limit   = budget ? parseFloat(budget.monthly_limit) : 0
                     const percent = limit > 0 ? Math.min((amount / limit) * 100, 100) : 0
                     const over    = limit > 0 && amount > limit
@@ -217,33 +230,24 @@ export default function DashboardPage() {
                             )}
                           </span>
                         </div>
-                        {limit > 0 ? (
-                          <>
-                            <div style={{ height: '6px', backgroundColor: '#f1f5f9', borderRadius: '99px' }}>
-                              <div style={{
-                                height: '100%',
-                                width: `${percent}%`,
-                                backgroundColor: over ? '#dc2626' : percent >= 80 ? '#f59e0b' : CATEGORY_COLORS[category] || '#94a3b8',
-                                borderRadius: '99px',
-                                transition: 'width 0.4s ease',
-                              }} />
-                            </div>
-                            {over && (
-                              <p style={{ fontSize: '11px', color: '#dc2626', marginTop: '2px' }}>
-                                Over by {symbol}{(amount - limit).toFixed(2)}
-                              </p>
-                            )}
-                          </>
-                        ) : (
-                          <div style={{ height: '6px', backgroundColor: '#f1f5f9', borderRadius: '99px' }}>
-                            <div style={{
-                              height: '100%',
-                              width: grandTotal > 0 ? `${(amount / grandTotal) * 100}%` : '0%',
-                              backgroundColor: CATEGORY_COLORS[category] || '#94a3b8',
-                              borderRadius: '99px',
-                              opacity: 0.4,
-                            }} />
-                          </div>
+                        <div style={{ height: '6px', backgroundColor: '#f1f5f9', borderRadius: '99px' }}>
+                          <div style={{
+                            height: '100%',
+                            width: limit > 0
+                              ? `${percent}%`
+                              : grandTotal > 0 ? `${(amount / grandTotal) * 100}%` : '0%',
+                            backgroundColor: over ? '#dc2626'
+                              : percent >= 80 ? '#f59e0b'
+                              : CATEGORY_COLORS[category] || '#94a3b8',
+                            borderRadius: '99px',
+                            opacity: limit > 0 ? 1 : 0.4,
+                            transition: 'width 0.4s ease',
+                          }} />
+                        </div>
+                        {over && (
+                          <p style={{ fontSize: '11px', color: '#dc2626', marginTop: '2px' }}>
+                            Over by {symbol}{(amount - limit).toFixed(2)}
+                          </p>
                         )}
                       </div>
                     )

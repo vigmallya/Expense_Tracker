@@ -41,7 +41,8 @@ export default function BudgetPage() {
   const { user }    = useAuth()
   const navigate    = useNavigate()
 
-  const [selectedMonth, setSelectedMonth]       = useState(getMonthKey(new Date()))
+  const [selectedMonthNum, setSelectedMonthNum] = useState(new Date().getMonth())
+  const [selectedYearNum, setSelectedYearNum]   = useState(new Date().getFullYear())
   const [budgets, setBudgets]                   = useState([])
   const [fixedExpenses, setFixedExpenses]       = useState([])
   const [spending, setSpending]                 = useState({}) // category -> amount spent
@@ -53,16 +54,50 @@ export default function BudgetPage() {
   const [editingFixed, setEditingFixed]         = useState(null) // fixed expense object or 'new'
   const [savingBudget, setSavingBudget]         = useState(false)
   const [savingFixed, setSavingFixed]           = useState(false)
+  const [preferredCurrency, setPreferredCurrency] = useState('EUR')
 
   const months = getLast5Months()
 
-  useEffect(() => { fetchAll() }, [selectedMonth])
+  useEffect(() => { fetchAll() }, [selectedMonthNum, selectedYearNum])
   useEffect(() => { fetchHistory() }, [budgets, fixedExpenses])
 
   async function fetchAll() {
     setLoading(true)
-    await Promise.all([fetchBudgets(), fetchFixedExpenses(), fetchSpending()])
+
+    // Get preferred currency first
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('preferred_currency')
+      .eq('id', user.id)
+      .single()
+
+    const currency = profileData?.preferred_currency || 'EUR'
+    setPreferredCurrency(currency)
+
+    // Now fetch everything else using the currency directly
+    await Promise.all([
+      fetchBudgets(),
+      fetchFixedExpenses(),
+      fetchSpendingWithCurrency(currency),
+      fetchHistory(currency),
+    ])
+
     setLoading(false)
+  }
+  // Computed monthKey 
+  const selectedMonth = `${selectedYearNum}-${String(selectedMonthNum + 1).padStart(2, '0')}`
+
+  //Fetch preffered currency from user profile
+  async function fetchPreferredCurrency() {
+    const { data } = await supabase
+      .from('profiles')
+      .select('preferred_currency')
+      .eq('id', user.id)
+      .single()
+
+    if (data?.preferred_currency) {
+      setPreferredCurrency(data.preferred_currency)
+    }
   }
 
   // Fetch variable budgets for selected month
@@ -76,105 +111,120 @@ export default function BudgetPage() {
     setBudgets(data || [])
   }
 
-  // Fetch all active fixed expenses
   async function fetchFixedExpenses() {
+    const [year, month] = selectedMonth.split('-')
+    const firstDay = `${year}-${month}-01`
+    const lastDay  = new Date(year, month, 0).toISOString().split('T')[0]
+
     const { data } = await supabase
       .from('fixed_expenses')
       .select('*')
       .eq('user_id', user.id)
       .eq('is_active', true)
-      .order('created_at', { ascending: true })
+      .lte('start_date', lastDay)      // started before or during selected month
+      .or(`end_date.is.null,end_date.gte.${firstDay}`) // no end date OR ends after start of month
+      .order('start_date', { ascending: true })
 
     setFixedExpenses(data || [])
   }
 
   // Fetch actual spending for selected month
   // Personal expenses + your share of group expenses
-  async function fetchSpending() {
+  async function fetchSpendingWithCurrency(currency) {
     const [year, month] = selectedMonth.split('-')
     const startDate = `${year}-${month}-01`
     const endDate   = new Date(year, month, 0).toISOString().split('T')[0]
 
-    // Personal expenses
     const { data: personalData } = await supabase
       .from('expenses')
       .select('amount, category')
       .eq('paid_by', user.id)
       .eq('is_personal', true)
+      .eq('currency', currency)
       .gte('date', startDate)
       .lte('date', endDate)
 
-    // Your splits from group expenses
     const { data: splitData } = await supabase
       .from('expense_splits')
-      .select('amount_owed, expenses(category, date, is_personal)')
+      .select('amount_owed, expenses(category, date, is_personal, currency)')
       .eq('user_id', user.id)
       .gte('expenses.date', startDate)
       .lte('expenses.date', endDate)
 
-    // Combine into category totals
     const totals = {}
 
     ;(personalData || []).forEach(e => {
       totals[e.category] = (totals[e.category] || 0) + parseFloat(e.amount)
     })
 
-    ;(splitData || []).filter(s => s.expenses && !s.expenses.is_personal).forEach(s => {
-      const cat = s.expenses.category
-      totals[cat] = (totals[cat] || 0) + parseFloat(s.amount_owed)
-    })
+    ;(splitData || [])
+      .filter(s => s.expenses && !s.expenses.is_personal && s.expenses.currency === currency)
+      .forEach(s => {
+        const cat = s.expenses.category
+        totals[cat] = (totals[cat] || 0) + parseFloat(s.amount_owed)
+      })
 
     setSpending(totals)
   }
 
   // Build last 5 months history
-  async function fetchHistory() {
-    const history = await Promise.all(
-      months.map(async monthKey => {
-        const [year, month] = monthKey.split('-')
-        const startDate = `${year}-${month}-01`
-        const endDate   = new Date(year, month, 0).toISOString().split('T')[0]
+  async function fetchHistory(currency) {
+      const history = await Promise.all(
+        months.map(async monthKey => {
+          const [year, month] = monthKey.split('-')
+          const firstDay  = `${year}-${month}-01`
+          const lastDay   = new Date(year, month, 0).toISOString().split('T')[0]
 
-        // Variable budgets total for this month
-        const { data: budgetData } = await supabase
-          .from('budgets')
-          .select('monthly_limit')
-          .eq('user_id', user.id)
-          .eq('month', monthKey)
+          // Fetch fixed expenses active in this specific month
+          const { data: fixedData } = await supabase
+            .from('fixed_expenses')
+            .select('amount')
+            .eq('user_id', user.id)
+            .eq('is_active', true)
+            .lte('start_date', lastDay)
+            .or(`end_date.is.null,end_date.gte.${firstDay}`)
 
-        const totalBudgeted = (budgetData || [])
-          .reduce((sum, b) => sum + parseFloat(b.monthly_limit), 0)
+          const totalFixed = (fixedData || [])
+            .reduce((sum, f) => sum + parseFloat(f.amount), 0)
 
-        // Actual spending for this month
-        const { data: personalData } = await supabase
-          .from('expenses')
-          .select('amount')
-          .eq('paid_by', user.id)
-          .eq('is_personal', true)
-          .gte('date', startDate)
-          .lte('date', endDate)
+          // Variable budgets for this month
+          const { data: budgetData } = await supabase
+            .from('budgets')
+            .select('monthly_limit')
+            .eq('user_id', user.id)
+            .eq('month', monthKey)
 
-        const { data: splitData } = await supabase
-          .from('expense_splits')
-          .select('amount_owed, expenses(date, is_personal)')
-          .eq('user_id', user.id)
-          .gte('expenses.date', startDate)
-          .lte('expenses.date', endDate)
+          const totalBudgeted = (budgetData || [])
+            .reduce((sum, b) => sum + parseFloat(b.monthly_limit), 0)
 
-        const totalSpent =
-          (personalData || []).reduce((sum, e) => sum + parseFloat(e.amount), 0) +
-          (splitData || [])
-            .filter(s => s.expenses && !s.expenses.is_personal)
-            .reduce((sum, s) => sum + parseFloat(s.amount_owed), 0)
+          // Actual spending for this month — preferred currency only
+          const { data: personalData } = await supabase
+            .from('expenses')
+            .select('amount')
+            .eq('paid_by', user.id)
+            .eq('is_personal', true)
+            .eq('currency', currency)
+            .gte('date', firstDay)
+            .lte('date', lastDay)
 
-        // Fixed expenses total
-        const totalFixed = fixedExpenses
-          .reduce((sum, f) => sum + parseFloat(f.amount), 0)
+          const { data: splitData } = await supabase
+            .from('expense_splits')
+            .select('amount_owed, expenses(date, is_personal, currency)')
+            .eq('user_id', user.id)
+            .gte('expenses.date', firstDay)
+            .lte('expenses.date', lastDay)
 
-        return { monthKey, totalBudgeted, totalSpent, totalFixed }
-      })
-    )
-    setMonthlyHistory(history)
+          const totalSpent =
+            (personalData || []).reduce((sum, e) => sum + parseFloat(e.amount), 0) +
+            (splitData || [])
+              .filter(s => s.expenses && !s.expenses.is_personal && s.expenses.currency === currency)
+              .reduce((sum, s) => sum + parseFloat(s.amount_owed), 0)
+
+          return { monthKey, totalFixed, totalBudgeted, totalSpent }
+        })
+      )
+
+      setMonthlyHistory(history)
   }
 
   // Save or update a variable budget
@@ -214,27 +264,60 @@ export default function BudgetPage() {
 
   // Save fixed expense
   async function saveFixed(data) {
-    setSavingFixed(true)
-    if (data.id) {
-      await supabase
-        .from('fixed_expenses')
-        .update({ title: data.title, amount: parseFloat(data.amount), currency: data.currency, category: data.category })
-        .eq('id', data.id)
-    } else {
-      await supabase
-        .from('fixed_expenses')
-        .insert({ ...data, user_id: user.id })
-    }
-    await fetchFixedExpenses()
-    setSavingFixed(false)
-    setEditingFixed(null)
-  }
+      setSavingFixed(true)
 
-  // Delete fixed expense
-  async function deleteFixed(id) {
-    await supabase.from('fixed_expenses').delete().eq('id', id)
-    await fetchFixedExpenses()
-  }
+      const [year, month] = selectedMonth.split('-')
+      const firstDayOfMonth = `${year}-${month}-01`
+      const lastDayOfPrevMonth = new Date(year, month - 1, 0).toISOString().split('T')[0]
+
+      try {
+        if (!data.id) {
+          // New fixed expense
+          await supabase.from('fixed_expenses').insert({
+            user_id:    user.id,
+            title:      data.title,
+            amount:     parseFloat(data.amount),
+            currency:   data.currency,
+            category:   data.category,
+            is_active:  true,
+            start_date: data.start_date || firstDayOfMonth,
+            end_date:   null,
+          })
+        } else if (data.updateType === 'from_now') {
+          // Update from this month onwards
+          // 1. Set end_date on current record to last day of previous month
+          await supabase.from('fixed_expenses').update({
+            end_date: lastDayOfPrevMonth,
+          }).eq('id', data.id)
+
+          // 2. Create new record from this month
+          await supabase.from('fixed_expenses').insert({
+            user_id:    user.id,
+            title:      data.title,
+            amount:     parseFloat(data.amount),
+            currency:   data.currency,
+            category:   data.category,
+            is_active:  true,
+            start_date: firstDayOfMonth,
+            end_date:   null,
+          })
+
+        } else if (data.updateType === 'stop') {
+          // Stop from this month — set end_date to last day of previous month
+          await supabase.from('fixed_expenses').update({
+            end_date: lastDayOfPrevMonth,
+          }).eq('id', data.id)
+        }
+
+        await fetchFixedExpenses()
+        setEditingFixed(null)
+
+      } catch (err) {
+        console.error(err)
+      } finally {
+        setSavingFixed(false)
+      }
+    }
 
   // Totals
   const totalFixed    = fixedExpenses.reduce((sum, f) => sum + parseFloat(f.amount), 0)
@@ -263,24 +346,42 @@ export default function BudgetPage() {
           <h1 style={{ fontSize: '24px', fontWeight: '700' }}>Budget</h1>
         </div>
 
-        {/* Month selector */}
-        <select
-          value={selectedMonth}
-          onChange={e => setSelectedMonth(e.target.value)}
-          style={{
-            padding: '6px 10px',
-            backgroundColor: 'rgba(255,255,255,0.1)',
-            border: '1px solid rgba(255,255,255,0.2)',
-            borderRadius: '8px', fontSize: '13px',
-            color: 'white', outline: 'none',
-          }}
-        >
-          {months.map(m => (
-            <option key={m} value={m} style={{ backgroundColor: '#0f172a' }}>
-              {getMonthLabel(m)}
-            </option>
-          ))}
-        </select>
+        {/* Month + Year selectors */}
+        <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+          <select
+            value={selectedMonthNum}
+            onChange={e => setSelectedMonthNum(Number(e.target.value))}
+            style={{
+              padding: '6px 10px',
+              backgroundColor: 'rgba(255,255,255,0.1)',
+              border: '1px solid rgba(255,255,255,0.2)',
+              borderRadius: '8px', fontSize: '13px',
+              color: 'white', outline: 'none',
+            }}
+          >
+            {['January','February','March','April','May','June',
+              'July','August','September','October','November','December'
+            ].map((m, i) => (
+              <option key={m} value={i} style={{ backgroundColor: '#0f172a' }}>{m}</option>
+            ))}
+          </select>
+
+          <select
+            value={selectedYearNum}
+            onChange={e => setSelectedYearNum(Number(e.target.value))}
+            style={{
+              padding: '6px 10px',
+              backgroundColor: 'rgba(255,255,255,0.1)',
+              border: '1px solid rgba(255,255,255,0.2)',
+              borderRadius: '8px', fontSize: '13px',
+              color: 'white', outline: 'none',
+            }}
+          >
+            {[2024, 2025, 2026, 2027].map(y => (
+              <option key={y} value={y} style={{ backgroundColor: '#0f172a' }}>{y}</option>
+            ))}
+          </select>
+        </div>
 
         {/* Summary cards */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '1rem' }}>
@@ -289,7 +390,7 @@ export default function BudgetPage() {
             borderRadius: '10px',
           }}>
             <p style={{ fontSize: '11px', opacity: 0.6, marginBottom: '4px' }}>Fixed committed</p>
-            <p style={{ fontSize: '20px', fontWeight: '700' }}>€{totalFixed.toFixed(2)}</p>
+            <p style={{ fontSize: '20px', fontWeight: '700' }}>{currencySymbol(preferredCurrency)}{totalFixed.toFixed(2)}</p>
           </div>
           <div style={{
             padding: '12px', backgroundColor: 'rgba(255,255,255,0.1)',
@@ -297,8 +398,8 @@ export default function BudgetPage() {
           }}>
             <p style={{ fontSize: '11px', opacity: 0.6, marginBottom: '4px' }}>Variable spent</p>
             <p style={{ fontSize: '20px', fontWeight: '700' }}>
-              €{totalSpent.toFixed(2)}
-              <span style={{ fontSize: '12px', opacity: 0.6 }}> / €{totalBudgeted.toFixed(2)}</span>
+              {currencySymbol(preferredCurrency)}{totalSpent.toFixed(2)}
+              <span style={{ fontSize: '12px', opacity: 0.6 }}> / {currencySymbol(preferredCurrency)}{totalBudgeted.toFixed(2)}</span>
             </p>
           </div>
         </div>
@@ -311,7 +412,13 @@ export default function BudgetPage() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
             <h2 style={{ fontSize: '15px', fontWeight: '600' }}>Fixed expenses</h2>
             <button
-              onClick={() => setEditingFixed({ title: '', amount: '', currency: 'EUR', category: 'Housing' })}
+              onClick={() => setEditingFixed({
+                  title:      '',
+                  amount:     '',
+                  currency:   preferredCurrency,
+                  category:   'Other',
+                  start_date: `${selectedMonth}-01`,
+                })}
               style={{
                 padding: '5px 12px', backgroundColor: '#f8fafc',
                 border: '1px solid #e2e8f0', borderRadius: '8px',
@@ -360,7 +467,7 @@ export default function BudgetPage() {
               backgroundColor: '#f8fafc', borderRadius: '8px',
             }}>
               <span style={{ fontSize: '13px', color: '#64748b' }}>Total fixed</span>
-              <span style={{ fontSize: '13px', fontWeight: '600' }}>€{totalFixed.toFixed(2)}</span>
+              <span style={{ fontSize: '13px', fontWeight: '600' }}>{currencySymbol(preferredCurrency)}{totalFixed.toFixed(2)}</span>
             </div>
           )}
         </div>
@@ -389,7 +496,7 @@ export default function BudgetPage() {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span style={{ fontSize: '12px', color: over ? '#dc2626' : '#64748b' }}>
-                        €{spent.toFixed(2)}{limit > 0 ? ` / €${limit.toFixed(2)}` : ''}
+                        {currencySymbol(preferredCurrency)}{spent.toFixed(2)}{limit > 0 ? ` / ${currencySymbol(preferredCurrency)}${limit.toFixed(2)}` : ''}
                       </span>
                       <button
                         onClick={() => setEditingBudget({ category: cat, monthly_limit: limit || '' })}
@@ -415,7 +522,7 @@ export default function BudgetPage() {
                   {/* Over budget warning */}
                   {over && (
                     <p style={{ fontSize: '11px', color: '#dc2626', marginTop: '4px' }}>
-                      Over budget by €{(spent - limit).toFixed(2)}
+                      Over budget by {currencySymbol(preferredCurrency)}{(spent - limit).toFixed(2)}
                     </p>
                   )}
 
@@ -438,7 +545,7 @@ export default function BudgetPage() {
           }}>
             <span style={{ fontSize: '13px', color: '#64748b' }}>Total variable</span>
             <span style={{ fontSize: '13px', fontWeight: '600' }}>
-              €{totalSpent.toFixed(2)} spent · €{totalBudgeted.toFixed(2)} budgeted
+              {currencySymbol(preferredCurrency)}{totalSpent.toFixed(2)} spent · {currencySymbol(preferredCurrency)}{totalBudgeted.toFixed(2)} budgeted
             </span>
           </div>
         </div>
@@ -473,22 +580,22 @@ export default function BudgetPage() {
                 <div style={{ display: 'flex', gap: '16px' }}>
                   <div>
                     <p style={{ fontSize: '11px', color: '#94a3b8' }}>Fixed</p>
-                    <p style={{ fontSize: '13px', fontWeight: '500' }}>€{h.totalFixed.toFixed(2)}</p>
+                    <p style={{ fontSize: '13px', fontWeight: '500' }}>{currencySymbol(preferredCurrency)}{h.totalFixed.toFixed(2)}</p>
                   </div>
                   <div>
                     <p style={{ fontSize: '11px', color: '#94a3b8' }}>Spent</p>
                     <p style={{ fontSize: '13px', fontWeight: '500', color: h.totalSpent > h.totalBudgeted && h.totalBudgeted > 0 ? '#dc2626' : '#0f172a' }}>
-                      €{h.totalSpent.toFixed(2)}
+                      {currencySymbol(preferredCurrency)}{h.totalSpent.toFixed(2)}
                     </p>
                   </div>
                   <div>
                     <p style={{ fontSize: '11px', color: '#94a3b8' }}>Budgeted</p>
-                    <p style={{ fontSize: '13px', fontWeight: '500' }}>€{h.totalBudgeted.toFixed(2)}</p>
+                    <p style={{ fontSize: '13px', fontWeight: '500' }}>{currencySymbol(preferredCurrency)}{h.totalBudgeted.toFixed(2)}</p>
                   </div>
                   <div>
                     <p style={{ fontSize: '11px', color: '#94a3b8' }}>Total plan</p>
                     <p style={{ fontSize: '13px', fontWeight: '500' }}>
-                      €{(h.totalFixed + h.totalBudgeted).toFixed(2)}
+                      {currencySymbol(preferredCurrency)}{(h.totalFixed + h.totalBudgeted).toFixed(2)}
                     </p>
                   </div>
                 </div>
@@ -557,131 +664,175 @@ export default function BudgetPage() {
 
       {/* ── Edit fixed expense modal ── */}
       {editingFixed && (
-        <div
-          style={{
-            position: 'fixed', inset: 0, zIndex: 200,
-            display: 'flex', alignItems: 'flex-end',
-            backgroundColor: 'rgba(0,0,0,0.4)',
-          }}
-          onClick={e => { if (e.target === e.currentTarget) setEditingFixed(null) }}
-        >
-          <div style={{
-            width: '100%', maxWidth: '480px', margin: '0 auto',
-            backgroundColor: 'white', borderRadius: '20px 20px 0 0',
-            padding: '1.5rem 1.5rem 2.5rem',
-            maxHeight: '90vh', overflowY: 'auto',
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-              <h2 style={{ fontSize: '18px', fontWeight: '600' }}>
-                {editingFixed.id ? 'Edit' : 'Add'} fixed expense
-              </h2>
-              <button onClick={() => setEditingFixed(null)} style={{ background: 'none', border: 'none', fontSize: '20px', color: '#64748b' }}>✕</button>
-            </div>
-
-            {/* Title */}
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ fontSize: '13px', color: '#64748b', display: 'block', marginBottom: '6px' }}>Name</label>
-              <input
-                type="text"
-                value={editingFixed.title}
-                onChange={e => setEditingFixed({ ...editingFixed, title: e.target.value })}
-                placeholder="e.g. Rent, Phone bill"
-                autoFocus
-                style={{
-                  width: '100%', padding: '10px 12px', fontSize: '15px',
-                  border: '1px solid #e2e8f0', borderRadius: '10px',
-                  outline: 'none', boxSizing: 'border-box',
-                }}
-              />
-            </div>
-
-            {/* Amount */}
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ fontSize: '13px', color: '#64748b', display: 'block', marginBottom: '6px' }}>Amount</label>
-              <input
-                type="number" step="0.01" min="0"
-                value={editingFixed.amount}
-                onChange={e => setEditingFixed({ ...editingFixed, amount: e.target.value })}
-                placeholder="0.00"
-                style={{
-                  width: '100%', padding: '12px',
-                  fontSize: '24px', fontWeight: '600',
-                  border: '1px solid #e2e8f0', borderRadius: '10px',
-                  outline: 'none', boxSizing: 'border-box',
-                }}
-              />
-            </div>
-
-            {/* Currency */}
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ fontSize: '13px', color: '#64748b', display: 'block', marginBottom: '6px' }}>Currency</label>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                {['EUR', 'INR', 'USD'].map(c => (
-                  <button key={c} type="button"
-                    onClick={() => setEditingFixed({ ...editingFixed, currency: c })}
-                    style={{
-                      padding: '6px 18px', borderRadius: '99px', fontSize: '13px',
-                      border: '1px solid',
-                      borderColor: editingFixed.currency === c ? '#0f172a' : '#e2e8f0',
-                      backgroundColor: editingFixed.currency === c ? '#0f172a' : 'white',
-                      color: editingFixed.currency === c ? 'white' : '#64748b',
-                    }}
-                  >{c}</button>
-                ))}
+          <div
+            style={{
+              position: 'fixed', inset: 0, zIndex: 200,
+              display: 'flex', alignItems: 'flex-end',
+              backgroundColor: 'rgba(0,0,0,0.4)',
+            }}
+            onClick={e => { if (e.target === e.currentTarget) setEditingFixed(null) }}
+          >
+            <div style={{
+              width: '100%', maxWidth: '480px', margin: '0 auto',
+              backgroundColor: 'white', borderRadius: '20px 20px 0 0',
+              padding: '1.5rem 1.5rem 2.5rem',
+              maxHeight: '90vh', overflowY: 'auto',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                <h2 style={{ fontSize: '18px', fontWeight: '600' }}>
+                  {editingFixed.id ? 'Edit' : 'Add'} fixed expense
+                </h2>
+                <button onClick={() => setEditingFixed(null)}
+                  style={{ background: 'none', border: 'none', fontSize: '20px', color: '#64748b' }}>✕</button>
               </div>
-            </div>
 
-            {/* Category */}
-            <div style={{ marginBottom: '1.5rem' }}>
-              <label style={{ fontSize: '13px', color: '#64748b', display: 'block', marginBottom: '6px' }}>Category</label>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                {CATEGORIES.map(cat => (
-                  <button key={cat} type="button"
-                    onClick={() => setEditingFixed({ ...editingFixed, category: cat })}
-                    style={{
-                      padding: '6px 14px', borderRadius: '99px', fontSize: '13px',
-                      border: '1px solid',
-                      borderColor: editingFixed.category === cat ? '#0f172a' : '#e2e8f0',
-                      backgroundColor: editingFixed.category === cat ? '#0f172a' : 'white',
-                      color: editingFixed.category === cat ? 'white' : '#64748b',
-                    }}
-                  >{cat}</button>
-                ))}
+              {/* Title */}
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: '13px', color: '#64748b', display: 'block', marginBottom: '6px' }}>Name</label>
+                <input
+                  type="text"
+                  value={editingFixed.title}
+                  onChange={e => setEditingFixed({ ...editingFixed, title: e.target.value })}
+                  placeholder="e.g. Rent, Phone bill"
+                  autoFocus
+                  style={{
+                    width: '100%', padding: '10px 12px', fontSize: '15px',
+                    border: '1px solid #e2e8f0', borderRadius: '10px',
+                    outline: 'none', boxSizing: 'border-box',
+                  }}
+                />
               </div>
+
+              {/* Amount */}
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: '13px', color: '#64748b', display: 'block', marginBottom: '6px' }}>Amount</label>
+                <input
+                  type="number" step="0.01" min="0"
+                  value={editingFixed.amount}
+                  onChange={e => setEditingFixed({ ...editingFixed, amount: e.target.value })}
+                  placeholder="0.00"
+                  style={{
+                    width: '100%', padding: '12px',
+                    fontSize: '24px', fontWeight: '600',
+                    border: '1px solid #e2e8f0', borderRadius: '10px',
+                    outline: 'none', boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+
+              {/* Currency */}
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: '13px', color: '#64748b', display: 'block', marginBottom: '6px' }}>Currency</label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {['EUR', 'INR', 'USD'].map(c => (
+                    <button key={c} type="button"
+                      onClick={() => setEditingFixed({ ...editingFixed, currency: c })}
+                      style={{
+                        padding: '6px 18px', borderRadius: '99px', fontSize: '13px',
+                        border: '1px solid',
+                        borderColor: editingFixed.currency === c ? '#0f172a' : '#e2e8f0',
+                        backgroundColor: editingFixed.currency === c ? '#0f172a' : 'white',
+                        color: editingFixed.currency === c ? 'white' : '#64748b',
+                      }}
+                    >{c}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Category */}
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: '13px', color: '#64748b', display: 'block', marginBottom: '6px' }}>Category</label>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {CATEGORIES.map(cat => (
+                    <button key={cat} type="button"
+                      onClick={() => setEditingFixed({ ...editingFixed, category: cat })}
+                      style={{
+                        padding: '6px 14px', borderRadius: '99px', fontSize: '13px',
+                        border: '1px solid',
+                        borderColor: editingFixed.category === cat ? '#0f172a' : '#e2e8f0',
+                        backgroundColor: editingFixed.category === cat ? '#0f172a' : 'white',
+                        color: editingFixed.category === cat ? 'white' : '#64748b',
+                      }}
+                    >{cat}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Start date — only shown for new expenses */}
+              {!editingFixed.id && (
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <label style={{ fontSize: '13px', color: '#64748b', display: 'block', marginBottom: '6px' }}>
+                    Start from
+                  </label>
+                  <input
+                    type="date"
+                    value={editingFixed.start_date || `${selectedMonth}-01`}
+                    onChange={e => setEditingFixed({ ...editingFixed, start_date: e.target.value })}
+                    style={{
+                      width: '100%', padding: '10px 12px', fontSize: '14px',
+                      border: '1px solid #e2e8f0', borderRadius: '10px',
+                      outline: 'none', boxSizing: 'border-box',
+                    }}
+                  />
+                  <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>
+                    This expense will appear in all months from this date onwards
+                  </p>
+                </div>
+              )}
+
+              {/* Action buttons */}
+              {!editingFixed.id ? (
+                // New expense — just save
+                <button
+                  onClick={() => saveFixed(editingFixed)}
+                  disabled={savingFixed || !editingFixed.title || !editingFixed.amount}
+                  style={{
+                    width: '100%', padding: '13px',
+                    backgroundColor: '#0f172a', color: 'white',
+                    border: 'none', borderRadius: '10px',
+                    fontSize: '15px', fontWeight: '500',
+                    opacity: savingFixed ? 0.7 : 1,
+                  }}
+                >
+                  {savingFixed ? 'Saving...' : 'Add fixed expense'}
+                </button>
+              ) : (
+                // Existing expense — three options
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>                
+
+                  {/* Option 1 — Update from this month, preserve history */}
+                  <button
+                    onClick={() => saveFixed({ ...editingFixed, updateType: 'from_now' })}
+                    disabled={savingFixed}
+                    style={{
+                      width: '100%', padding: '13px',
+                      backgroundColor: '#f8fafc', color: '#0f172a',
+                      border: '1px solid #e2e8f0', borderRadius: '10px',
+                      fontSize: '14px', fontWeight: '500',
+                    }}
+                  >
+                    Update from {getMonthLabel(selectedMonth)} onwards
+                  </button>
+
+                  {/* Option 2 — Stop this expense */}
+                  <button
+                    onClick={() => saveFixed({ ...editingFixed, updateType: 'stop' })}
+                    disabled={savingFixed}
+                    style={{
+                      width: '100%', padding: '13px',
+                      backgroundColor: '#fef2f2', color: '#dc2626',
+                      border: '1px solid #fecaca', borderRadius: '10px',
+                      fontSize: '14px', fontWeight: '500',
+                    }}
+                  >
+                    Stop from {getMonthLabel(selectedMonth)} onwards
+                  </button>
+
+                </div>
+              )}
             </div>
-
-            <button
-              onClick={() => saveFixed(editingFixed)}
-              disabled={savingFixed || !editingFixed.title || !editingFixed.amount}
-              style={{
-                width: '100%', padding: '13px',
-                backgroundColor: '#0f172a', color: 'white',
-                border: 'none', borderRadius: '10px',
-                fontSize: '15px', fontWeight: '500',
-                opacity: savingFixed ? 0.7 : 1,
-                marginBottom: '10px',
-              }}
-            >
-              {savingFixed ? 'Saving...' : editingFixed.id ? 'Save changes' : 'Add fixed expense'}
-            </button>
-
-            {/* Delete button for existing fixed expenses */}
-            {editingFixed.id && (
-              <button
-                onClick={() => deleteFixed(editingFixed.id)}
-                style={{
-                  width: '100%', padding: '13px',
-                  backgroundColor: '#fef2f2', color: '#dc2626',
-                  border: '1px solid #fecaca', borderRadius: '10px',
-                  fontSize: '14px', fontWeight: '500',
-                }}
-              >
-                🗑 Remove fixed expense
-              </button>
-            )}
           </div>
-        </div>
-      )}
+        )}
 
       <BottomNav />
     </div>
