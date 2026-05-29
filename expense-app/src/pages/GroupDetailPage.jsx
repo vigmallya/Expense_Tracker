@@ -6,6 +6,7 @@ import AddGroupExpenseModal from '../components/AddGroupExpenseModal'
 import { getNetBalances, simplifyDebts } from '../utils/splitCalculator'
 import InviteMemberModal from '../components/InviteMemberModal'
 import EditGroupExpenseModal from '../components/EditGroupExpenseModal'
+import SettleModal from '../components/SettleModal'
 
 const symbols = { EUR: '€', INR: '₹', USD: '$' }
 
@@ -42,12 +43,15 @@ export default function GroupDetailPage() {
   const [activeTab, setActiveTab]   = useState('expenses') // 'expenses' | 'balances' | 'members'
   const [showInvite, setShowInvite] = useState(false)
   const [editingExpense, setEditingExpense] = useState(null)
+  const [settlements, setSettlements] = useState([])
+  const [paidByFilter, setPaidByFilter] = useState('all')
+  const [settleTarget, setSettleTarget] = useState(null) // { from, to, amount }
 
   useEffect(() => { fetchAll() }, [groupId])
 
   async function fetchAll() {
     setLoading(true)
-    await Promise.all([fetchGroup(), fetchMembers(), fetchExpenses()])
+    await Promise.all([fetchGroup(), fetchMembers(), fetchExpenses(), fetchSettlements()])
     setLoading(false)
   }
 
@@ -135,56 +139,45 @@ export default function GroupDetailPage() {
   }
 
   // Settle a debt — mark relevant splits as settled
-    async function handleSettle(fromUserId, toUserId) {
-      try {
-        // Find all unsettled splits where fromUser owes toUser
-        const expensesPaidByCreditor = expenses
-          .filter(e => e.paid_by === toUserId)
-          .map(e => e.id)
+  // Mark settled — just insert a settlement record
+  // Splits are NEVER touched
+  async function handleSettle(fromUserId, toUserId, amount) {
+    try {
+      const { error } = await supabase
+        .from('settlements')
+        .insert({
+          group_id:  groupId,
+          from_user: fromUserId,
+          to_user:   toUserId,
+          amount,
+        })
 
-        if (expensesPaidByCreditor.length > 0) {
-          const { error } = await supabase
-            .from('expense_splits')
-            .update({ is_settled: true })
-            .eq('user_id', fromUserId)
-            .eq('is_settled', false)
-            .in('expense_id', expensesPaidByCreditor)
+      if (error) throw error
 
-          if (error) throw error
-        }
+      await fetchSettlements()
 
-        await fetchExpenses()
-
-      } catch (err) {
-        alert(err.message)
-      }
+    } catch (err) {
+      alert(err.message)
     }
+  }
 
-    // Undo settle — mark relevant splits as unsettled
-    async function handleUndoSettle(fromUserId, toUserId) {
-      try {
-        // Find all settled splits where fromUser owes toUser
-        const expensesPaidByCreditor = expenses
-          .filter(e => e.paid_by === toUserId)
-          .map(e => e.id)
+  // Undo — just delete that specific settlement record
+  // Splits are NEVER touched
+  async function handleUndoSettle(settlementId) {
+    try {
+      const { error } = await supabase
+        .from('settlements')
+        .delete()
+        .eq('id', settlementId)
 
-        if (expensesPaidByCreditor.length > 0) {
-          const { error } = await supabase
-            .from('expense_splits')
-            .update({ is_settled: false })
-            .eq('user_id', fromUserId)
-            .eq('is_settled', true)
-            .in('expense_id', expensesPaidByCreditor)
+      if (error) throw error
 
-          if (error) throw error
-        }
+      await fetchSettlements()
 
-        await fetchExpenses()
-
-      } catch (err) {
-        alert(err.message)
-      }
+    } catch (err) {
+      alert(err.message)
     }
+  }
 
   // Get member name by ID
   function getMemberName(id) {
@@ -192,34 +185,101 @@ export default function GroupDetailPage() {
     return member?.name || 'Unknown'
   }
 
-  // Calculate debts from splits
-  // Calculate outstanding — unsettled splits grouped by who owes whom
-  const outstandingMap = {}
+  // ─────────────────────────────────────────────────────────
+  // BALANCE CALCULATION
+  // Step 1 — What each person owes from splits
+  const owedMap = {}
   splits.forEach(split => {
-    if (split.is_settled) return
     const paidBy = split.expenses?.paid_by
     if (!paidBy || paidBy === split.user_id) return
     const key = `${split.user_id}__${paidBy}`
-    outstandingMap[key] = (outstandingMap[key] || 0) + parseFloat(split.amount_owed)
-  })
-  const outstanding = Object.entries(outstandingMap).map(([key, amount]) => {
-    const [fromId, toId] = key.split('__')
-    return { from: fromId, to: toId, amount: parseFloat(amount.toFixed(2)) }
+    owedMap[key] = (owedMap[key] || 0) + parseFloat(split.amount_owed)
   })
 
-  // Calculate settled — settled splits grouped by who paid whom
-  const settledMap = {}
-  splits.forEach(split => {
-    if (!split.is_settled) return
-    const paidBy = split.expenses?.paid_by
-    if (!paidBy || paidBy === split.user_id) return
-    const key = `${split.user_id}__${paidBy}`
-    settledMap[key] = (settledMap[key] || 0) + parseFloat(split.amount_owed)
+  // Step 2 — Total paid per direction from settlements
+  const paidMap = {}
+  settlements.forEach(s => {
+    const key = `${s.from_user}__${s.to_user}`
+    paidMap[key] = (paidMap[key] || 0) + parseFloat(s.amount)
   })
-  const settledList = Object.entries(settledMap).map(([key, amount]) => {
-    const [fromId, toId] = key.split('__')
-    return { from: fromId, to: toId, amount: parseFloat(amount.toFixed(2)) }
+
+  // Step 3 — Last settlement per pair (for settled section + undo)
+  const lastSettlementMap = {}
+  settlements.forEach(s => {
+    const key = `${s.from_user}__${s.to_user}`
+    if (
+      !lastSettlementMap[key] ||
+      new Date(s.settled_at) > new Date(lastSettlementMap[key].settled_at)
+    ) {
+      lastSettlementMap[key] = s
+    }
   })
+
+  // Step 4 — Net opposite directions and build outstanding/settled lists
+  const personPairs = new Set()
+  const allKeys = new Set([...Object.keys(owedMap), ...Object.keys(paidMap)])
+  allKeys.forEach(key => {
+    const [a, b] = key.split('__')
+    personPairs.add([a, b].sort().join('__'))
+  })
+
+  const outstanding = []
+  const settledList = []
+
+  personPairs.forEach(pairKey => {
+  const [p1, p2] = pairKey.split('__')
+
+  const p1OwesP2 = (owedMap[`${p1}__${p2}`] || 0) - (paidMap[`${p1}__${p2}`] || 0)
+  const p2OwesP1 = (owedMap[`${p2}__${p1}`] || 0) - (paidMap[`${p2}__${p1}`] || 0)
+  const net      = parseFloat((p1OwesP2 - p2OwesP1).toFixed(2))
+
+  // Find last settlement for this pair (either direction)
+  const lastP1toP2 = lastSettlementMap[`${p1}__${p2}`]
+  const lastP2toP1 = lastSettlementMap[`${p2}__${p1}`]
+  const lastSettlement = !lastP1toP2 ? lastP2toP1
+    : !lastP2toP1 ? lastP1toP2
+    : new Date(lastP1toP2.settled_at) > new Date(lastP2toP1.settled_at)
+      ? lastP1toP2 : lastP2toP1
+
+  if (net > 0.01) {
+    // Still outstanding — but also show last settlement if any payments made
+    outstanding.push({ from: p1, to: p2, amount: net })
+
+    // Show last settlement below outstanding if payments have been made
+    if (lastSettlement) {
+      settledList.push({
+        from:         lastSettlement.from_user,
+        to:           lastSettlement.to_user,
+        amount:       parseFloat(lastSettlement.amount),
+        settlementId: lastSettlement.id,
+      })
+    }
+
+  } else if (net < -0.01) {
+    outstanding.push({ from: p2, to: p1, amount: Math.abs(net) })
+
+    if (lastSettlement) {
+      settledList.push({
+        from:         lastSettlement.from_user,
+        to:           lastSettlement.to_user,
+        amount:       parseFloat(lastSettlement.amount),
+        settlementId: lastSettlement.id,
+      })
+    }
+
+  } else {
+    // Fully settled
+    if (lastSettlement) {
+      settledList.push({
+        from:         lastSettlement.from_user,
+        to:           lastSettlement.to_user,
+        amount:       parseFloat(lastSettlement.amount),
+        settlementId: lastSettlement.id,
+      })
+    }
+  }
+})
+      
 
   // Is current user the group creator/admin
   const isAdmin = group?.created_by === user.id
@@ -288,7 +348,7 @@ export default function GroupDetailPage() {
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: '0', marginTop: '4px' }}>
-          {['expenses', 'balances', 'members'].map(tab => (
+          {['expenses', 'balances', 'members', 'history'].map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -297,7 +357,7 @@ export default function GroupDetailPage() {
                 background: 'none', border: 'none',
                 borderBottom: activeTab === tab ? '2px solid white' : '2px solid transparent',
                 color: activeTab === tab ? 'white' : 'rgba(255,255,255,0.4)',
-                fontSize: '13px', fontWeight: '500',
+                fontSize: '12px', fontWeight: '500',
                 textTransform: 'capitalize', cursor: 'pointer',
               }}
             >
@@ -313,160 +373,232 @@ export default function GroupDetailPage() {
         {/* EXPENSES TAB */}
         {activeTab === 'expenses' && (
           <div>
-            {expenses.length === 0 && (
+            {/* Paid by filter pills */}
+            {members.length > 1 && (
+              <div style={{
+                display: 'flex', gap: '8px', overflowX: 'auto',
+                scrollbarWidth: 'none', marginBottom: '1rem',
+                paddingBottom: '4px',
+              }}>
+                <button
+                  onClick={() => setPaidByFilter('all')}
+                  style={{
+                    padding: '5px 14px', borderRadius: '99px',
+                    fontSize: '12px', fontWeight: '500', flexShrink: 0,
+                    border: '1px solid',
+                    borderColor: paidByFilter === 'all' ? '#0f172a' : '#e2e8f0',
+                    backgroundColor: paidByFilter === 'all' ? '#0f172a' : 'white',
+                    color: paidByFilter === 'all' ? 'white' : '#64748b',
+                  }}
+                >
+                  Everyone
+                </button>
+                {members.map(m => (
+                  <button
+                    key={m.id}
+                    onClick={() => setPaidByFilter(m.id)}
+                    style={{
+                      padding: '5px 14px', borderRadius: '99px',
+                      fontSize: '12px', fontWeight: '500', flexShrink: 0,
+                      border: '1px solid',
+                      borderColor: paidByFilter === m.id ? '#0f172a' : '#e2e8f0',
+                      backgroundColor: paidByFilter === m.id ? '#0f172a' : 'white',
+                      color: paidByFilter === m.id ? 'white' : '#64748b',
+                    }}
+                  >
+                    {m.id === user.id ? 'Me' : m.name}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Filtered expenses */}
+            {expenses
+              .filter(e => paidByFilter === 'all' || e.paid_by === paidByFilter)
+              .length === 0 && (
               <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94a3b8' }}>
                 <p style={{ fontSize: '32px', marginBottom: '8px' }}>💸</p>
-                <p style={{ fontSize: '14px' }}>No expenses yet</p>
-                <p style={{ fontSize: '13px', marginTop: '4px' }}>Tap "Add expense" to get started</p>
+                <p style={{ fontSize: '14px' }}>No expenses found</p>
               </div>
             )}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {expenses.map(expense => {
-                // Get splits for this expense
-                const expSplits = splits.filter(s => s.expense_id === expense.id)
-                const settledCount = expSplits.filter(s => s.is_settled).length
-
-                return (
-                  <div key={expense.id} style={{
-                    padding: '14px',
-                    backgroundColor: 'white',
-                    borderRadius: '12px',
-                    border: '1px solid #f1f5f9',
-                  }}>
-                    {/* Top row */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                        <span style={{ fontSize: '20px' }}>{categoryIcon(expense.category)}</span>
-                        <div>
-                          <p style={{ fontSize: '14px', fontWeight: '600' }}>{expense.title}</p>
-                          <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>
-                            Paid by {getMemberName(expense.paid_by)} · {formatDate(expense.date)}
-                          </p>
+              {expenses
+                .filter(e => paidByFilter === 'all' || e.paid_by === paidByFilter)
+                .map(expense => {
+                  const expSplits = splits.filter(s => s.expense_id === expense.id)
+                  return (
+                    <div key={expense.id} style={{
+                      padding: '14px', backgroundColor: 'white',
+                      borderRadius: '12px', border: '1px solid #f1f5f9',
+                    }}>
+                      {/* Top row */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                          <span style={{ fontSize: '20px' }}>{categoryIcon(expense.category)}</span>
+                          <div>
+                            <p style={{ fontSize: '14px', fontWeight: '600' }}>{expense.title}</p>
+                            <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>
+                              Paid by {getMemberName(expense.paid_by)} · {formatDate(expense.date)}
+                            </p>
+                          </div>
                         </div>
+                        <p style={{ fontSize: '16px', fontWeight: '700' }}>
+                          {currencySymbol(expense.currency)}{parseFloat(expense.amount).toFixed(2)}
+                        </p>
                       </div>
-                      <p style={{ fontSize: '16px', fontWeight: '700' }}>
-                        {currencySymbol(expense.currency)}{parseFloat(expense.amount).toFixed(2)}
-                      </p>
-                    </div>
 
-                    {/* Split summary */}
+                      {/* Split tags + edit button */}
                       <div style={{
                         marginTop: '10px', paddingTop: '10px',
                         borderTop: '1px solid #f1f5f9',
-                        display: 'flex', gap: '6px', flexWrap: 'wrap',
+                        display: 'flex', justifyContent: 'space-between',
                         alignItems: 'center',
                       }}>
-                        {expSplits.map(split => (
-                          <span key={split.id} style={{
-                            fontSize: '11px', padding: '2px 8px',
-                            borderRadius: '99px',
-                            backgroundColor: '#f1f5f9',
-                            color: '#64748b',
-                          }}>
-                            {getMemberName(split.user_id)} {currencySymbol(expense.currency)}{parseFloat(split.amount_owed).toFixed(2)}
-                          </span>
-                        ))}
-                        <span style={{ fontSize: '11px', color: '#94a3b8', marginLeft: 'auto' }}>
-                          {settledCount}/{expSplits.length} settled
-                        </span>
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', flex: 1 }}>
+                          {expSplits.map(split => (
+                            <span key={split.id} style={{
+                              fontSize: '11px', padding: '2px 8px',
+                              borderRadius: '99px', backgroundColor: '#f1f5f9', color: '#64748b',
+                            }}>
+                              {getMemberName(split.user_id)} {currencySymbol(expense.currency)}{parseFloat(split.amount_owed).toFixed(2)}
+                            </span>
+                          ))}
+                        </div>
+                        <button
+                          onClick={() => setEditingExpense(expense)}
+                          style={{
+                            padding: '4px 12px', flexShrink: 0,
+                            backgroundColor: 'white', border: '1px solid #e2e8f0',
+                            borderRadius: '8px', fontSize: '12px', color: '#64748b',
+                            marginLeft: '8px',
+                          }}
+                        >
+                          ✏️ Edit
+                        </button>
                       </div>
-                    {/* Edit button — only visible to group members */}
-                      <button
-                        onClick={() => setEditingExpense(expense)}
-                        style={{
-                          marginTop: '8px', padding: '6px 14px',
-                          backgroundColor: '#f8fafc', border: '1px solid #e2e8f0',
-                          borderRadius: '8px', fontSize: '12px', color: '#64748b',
-                        }}
-                      >
-                        ✏️ Edit
-                      </button>
-                  </div>
-                )
-              })}
+                    </div>
+                  )
+                })}
             </div>
           </div>
         )}
 
         {/* BALANCES TAB */}
         {activeTab === 'balances' && (
-        <div>
-          {outstanding.length === 0 && settledList.length === 0 && (
-            <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94a3b8' }}>
-              <p style={{ fontSize: '32px', marginBottom: '8px' }}>🎉</p>
-              <p style={{ fontSize: '14px' }}>All settled up!</p>
-              <p style={{ fontSize: '13px', marginTop: '4px' }}>No outstanding balances</p>
+          <div>
+            {/* ── Your personal summary ── */}
+            <div style={{
+              display: 'grid', gridTemplateColumns: '1fr 1fr',
+              gap: '10px', marginBottom: '1.5rem',
+            }}>
+              <div style={{
+                padding: '14px', backgroundColor: '#fef9f0',
+                borderRadius: '12px', border: '1px solid #fed7aa',
+                textAlign: 'center',
+              }}>
+                <p style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>You owe</p>
+                <p style={{ fontSize: '22px', fontWeight: '700', color: '#dc2626' }}>
+                  {outstanding
+                    .filter(t => t.from === user.id)
+                    .reduce((sum, t) => sum + t.amount, 0)
+                    .toFixed(2)}
+                </p>
+              </div>
+              <div style={{
+                padding: '14px', backgroundColor: '#f0fdf4',
+                borderRadius: '12px', border: '1px solid #bbf7d0',
+                textAlign: 'center',
+              }}>
+                <p style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>Owed to you</p>
+                <p style={{ fontSize: '22px', fontWeight: '700', color: '#16a34a' }}>
+                  {outstanding
+                    .filter(t => t.to === user.id)
+                    .reduce((sum, t) => sum + t.amount, 0)
+                    .toFixed(2)}
+                </p>
+              </div>
             </div>
-          )}
 
-          {/* Outstanding */}
-          {outstanding.length > 0 && (
-            <div style={{ marginBottom: '1.5rem' }}>
-              <p style={{ fontSize: '12px', fontWeight: '600', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
-                Outstanding
-              </p>
-              {outstanding.map((t, i) => {
-                const isCurrentUser = t.from === user.id
-                return (
-                  <div key={i} style={{
-                    padding: '14px',
-                    backgroundColor: isCurrentUser ? '#fef9f0' : 'white',
-                    borderRadius: '12px',
-                    border: `1px solid ${isCurrentUser ? '#fed7aa' : '#f1f5f9'}`,
-                    marginBottom: '8px',
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <p style={{ fontSize: '14px', fontWeight: '500' }}>
-                          <span style={{ color: isCurrentUser ? '#dc2626' : '#0f172a' }}>
-                            {getMemberName(t.from)}
-                          </span>
-                          {' → '}
-                          <span style={{ color: '#16a34a' }}>
-                            {getMemberName(t.to)}
-                          </span>
-                        </p>
-                        <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>
-                          {isCurrentUser ? 'You need to pay' : 'Needs to pay you'}
-                        </p>
-                      </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <p style={{ fontSize: '18px', fontWeight: '700' }}>
-                          {t.amount.toFixed(2)}
-                        </p>
-                        {isCurrentUser && (
-                          <button
-                            onClick={() => handleSettle(t.from, t.to)}
-                            style={{
-                              marginTop: '6px', padding: '4px 12px',
-                              backgroundColor: '#0f172a', color: 'white',
-                              border: 'none', borderRadius: '99px',
-                              fontSize: '12px', cursor: 'pointer',
-                            }}
-                          >
-                            Mark settled
-                          </button>
-                        )}
+            {outstanding.length === 0 && settledList.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94a3b8' }}>
+                <p style={{ fontSize: '32px', marginBottom: '8px' }}>🎉</p>
+                <p style={{ fontSize: '14px' }}>All settled up!</p>
+                <p style={{ fontSize: '13px', marginTop: '4px' }}>No outstanding balances</p>
+              </div>
+            )}
+
+            {/* ── Outstanding ── */}
+            {outstanding.length > 0 && (
+              <div style={{ marginBottom: '1.5rem' }}>
+                <p style={{
+                  fontSize: '12px', fontWeight: '600', color: '#94a3b8',
+                  textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px'
+                }}>
+                  Outstanding
+                </p>
+                {outstanding.map((t, i) => {
+                  const isCurrentUser = t.from === user.id
+                  const isReceiver    = t.to === user.id
+                  return (
+                    <div key={i} style={{
+                      padding: '14px', marginBottom: '8px',
+                      backgroundColor: isCurrentUser ? '#fef9f0' : isReceiver ? '#f0fdf4' : 'white',
+                      borderRadius: '12px',
+                      border: `1px solid ${isCurrentUser ? '#fed7aa' : isReceiver ? '#bbf7d0' : '#f1f5f9'}`,
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <p style={{ fontSize: '14px', fontWeight: '500' }}>
+                            <span style={{ color: '#dc2626' }}>{getMemberName(t.from)}</span>
+                            {' → '}
+                            <span style={{ color: '#16a34a' }}>{getMemberName(t.to)}</span>
+                          </p>
+                          <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>
+                            {isCurrentUser ? 'You need to pay'
+                              : isReceiver ? 'Needs to pay you'
+                              : 'Outstanding'}
+                          </p>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <p style={{ fontSize: '18px', fontWeight: '700' }}>
+                            {t.amount.toFixed(2)}
+                          </p>
+                          {(isCurrentUser || isReceiver) && (
+                            <button
+                              onClick={() => setSettleTarget({ from: t.from, to: t.to, amount: t.amount })}
+                              style={{
+                                marginTop: '6px', padding: '4px 12px',
+                                backgroundColor: '#0f172a', color: 'white',
+                                border: 'none', borderRadius: '99px',
+                                fontSize: '12px', cursor: 'pointer',
+                              }}
+                            >
+                              {isCurrentUser ? 'Mark settled' : 'Mark as received'}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
+                  )
+                })}
+              </div>
+            )}
 
-            {/* Settled */}
+            {/* ── Settled ── */}
             {settledList.length > 0 && (
               <div>
-                <p style={{ fontSize: '12px', fontWeight: '600', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
-                  Settled
+                <p style={{
+                  fontSize: '12px', fontWeight: '600', color: '#94a3b8',
+                  textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px'
+                }}>
+                  Last payment
                 </p>
                 {settledList.map((s, i) => (
                   <div key={i} style={{
-                    padding: '14px', backgroundColor: '#f0fdf4',
+                    padding: '14px', marginBottom: '8px',
+                    backgroundColor: '#f0fdf4',
                     borderRadius: '12px', border: '1px solid #bbf7d0',
-                    marginBottom: '8px',
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
@@ -474,16 +606,16 @@ export default function GroupDetailPage() {
                           {getMemberName(s.from)} → {getMemberName(s.to)}
                         </p>
                         <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>
-                          ✓ Paid
+                          ✓ Last payment
                         </p>
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <p style={{ fontSize: '16px', fontWeight: '700', color: '#16a34a' }}>
                           {s.amount.toFixed(2)}
                         </p>
-                        {s.from === user.id && (
+                        {(s.from === user.id || s.to === user.id) && (
                           <button
-                            onClick={() => handleUndoSettle(s.from, s.to)}
+                            onClick={() => handleUndoSettle(s.settlementId)}
                             style={{
                               marginTop: '6px', padding: '4px 12px',
                               backgroundColor: 'white', color: '#dc2626',
@@ -491,7 +623,7 @@ export default function GroupDetailPage() {
                               fontSize: '12px', cursor: 'pointer',
                             }}
                           >
-                            Undo
+                            Undo last
                           </button>
                         )}
                       </div>
@@ -500,8 +632,8 @@ export default function GroupDetailPage() {
                 ))}
               </div>
             )}
-          </div>
-        )}
+            </div>
+          )}
 
         {/* MEMBERS TAB */}
         {activeTab === 'members' && (
@@ -610,6 +742,131 @@ export default function GroupDetailPage() {
             )}
           </div>
         )}
+
+        {/* HISTORY TAB */}
+        {/* HISTORY TAB */}
+        {activeTab === 'history' && (
+          <div>
+            {settlements.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94a3b8' }}>
+                <p style={{ fontSize: '32px', marginBottom: '8px' }}>📋</p>
+                <p style={{ fontSize: '14px' }}>No settlement history yet</p>
+                <p style={{ fontSize: '13px', marginTop: '4px' }}>
+                  Settled payments will appear here
+                </p>
+              </div>
+            )}
+
+            {settlements.length > 0 && (() => {
+              // Group settlements by month
+              const grouped = settlements.reduce((acc, s) => {
+                const date = new Date(s.settled_at)
+                const key  = date.toLocaleString('default', { month: 'long', year: 'numeric' })
+                if (!acc[key]) acc[key] = []
+                acc[key].push(s)
+                return acc
+              }, {})
+
+              return Object.entries(grouped).map(([month, monthSettlements]) => {
+                // Total settled this month
+                const monthTotal = monthSettlements
+                  .reduce((sum, s) => sum + parseFloat(s.amount), 0)
+                  .toFixed(2)
+
+                return (
+                  <div key={month} style={{ marginBottom: '1.5rem' }}>
+
+                    {/* Month header */}
+                    <div style={{
+                      display: 'flex', justifyContent: 'space-between',
+                      alignItems: 'baseline', marginBottom: '10px',
+                    }}>
+                      <p style={{
+                        fontSize: '12px', fontWeight: '600',
+                        color: '#94a3b8', textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                      }}>
+                        {month}
+                      </p>
+                      <p style={{ fontSize: '12px', color: '#94a3b8' }}>
+                        {monthSettlements.length} payment{monthSettlements.length !== 1 ? 's' : ''} · {monthTotal}
+                      </p>
+                    </div>
+
+                    {/* Settlement rows */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {monthSettlements.map((s, i) => {
+                        const isCurrentUserPayer    = s.from_user === user.id
+                        const isCurrentUserReceiver = s.to_user === user.id
+
+                        return (
+                          <div key={i} style={{
+                            padding: '14px', backgroundColor: 'white',
+                            borderRadius: '12px',
+                            border: '1px solid #f1f5f9',
+                          }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+
+                              {/* Left — who paid whom */}
+                              <div style={{ flex: 1 }}>
+                                <p style={{ fontSize: '14px', fontWeight: '500' }}>
+                                  <span style={{
+                                    color: isCurrentUserPayer ? '#dc2626' : '#0f172a',
+                                    fontWeight: isCurrentUserPayer ? '600' : '500',
+                                  }}>
+                                    {isCurrentUserPayer ? 'You' : getMemberName(s.from_user)}
+                                  </span>
+                                  {' paid '}
+                                  <span style={{
+                                    color: isCurrentUserReceiver ? '#16a34a' : '#0f172a',
+                                    fontWeight: isCurrentUserReceiver ? '600' : '500',
+                                  }}>
+                                    {isCurrentUserReceiver ? 'you' : getMemberName(s.to_user)}
+                                  </span>
+                                </p>
+
+                                {/* Date + time */}
+                                <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '3px' }}>
+                                  {new Date(s.settled_at).toLocaleDateString('default', {
+                                    day: 'numeric', month: 'short',
+                                  })}
+                                  {' · '}
+                                  {new Date(s.settled_at).toLocaleTimeString('default', {
+                                    hour: '2-digit', minute: '2-digit',
+                                  })}
+                                </p>
+                              </div>
+
+                              {/* Right — amount + badge */}
+                              <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                                <p style={{
+                                  fontSize: '16px', fontWeight: '700',
+                                  color: isCurrentUserReceiver ? '#16a34a' : isCurrentUserPayer ? '#dc2626' : '#0f172a',
+                                }}>
+                                  {isCurrentUserReceiver ? '+' : isCurrentUserPayer ? '-' : ''}
+                                  {parseFloat(s.amount).toFixed(2)}
+                                </p>
+                                <span style={{
+                                  fontSize: '10px', padding: '2px 8px',
+                                  borderRadius: '99px', marginTop: '4px',
+                                  display: 'inline-block',
+                                  backgroundColor: '#f0fdf4', color: '#16a34a',
+                                }}>
+                                  ✓ Settled
+                                </span>
+                              </div>
+
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })
+            })()}
+          </div>
+        )}
       </div>
 
       {showModal && (
@@ -633,6 +890,19 @@ export default function GroupDetailPage() {
           members={members}
           onClose={() => setEditingExpense(null)}
           onEdited={() => { setEditingExpense(null); fetchExpenses() }}
+        />
+      )}
+      {settleTarget && (
+        <SettleModal
+          from={settleTarget.from}
+          to={settleTarget.to}
+          amount={settleTarget.amount}
+          getMemberName={getMemberName}
+          onClose={() => setSettleTarget(null)}
+          onConfirm={(amount) => {
+            handleSettle(settleTarget.from, settleTarget.to, amount)
+            setSettleTarget(null)
+          }}
         />
       )}
     </div>
