@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext'
 import AddGroupExpenseModal from '../components/AddGroupExpenseModal'
 import { getNetBalances, simplifyDebts } from '../utils/splitCalculator'
 import InviteMemberModal from '../components/InviteMemberModal'
+import EditGroupExpenseModal from '../components/EditGroupExpenseModal'
 
 const symbols = { EUR: '€', INR: '₹', USD: '$' }
 
@@ -40,6 +41,7 @@ export default function GroupDetailPage() {
   const [deleting, setDeleting]     = useState(false)
   const [activeTab, setActiveTab]   = useState('expenses') // 'expenses' | 'balances' | 'members'
   const [showInvite, setShowInvite] = useState(false)
+  const [editingExpense, setEditingExpense] = useState(null)
 
   useEffect(() => { fetchAll() }, [groupId])
 
@@ -124,23 +126,44 @@ export default function GroupDetailPage() {
 
   // Settle a debt — mark relevant splits as settled
   async function handleSettle(fromUserId, toUserId, amount) {
-    // Insert settlement record
-    await supabase.from('settlements').insert({
-      group_id:  groupId,
-      from_user: fromUserId,
-      to_user:   toUserId,
-      amount,
-    })
+      try {
+        // Insert settlement record
+        const { error: settlementError } = await supabase
+          .from('settlements')
+          .insert({
+            group_id:  groupId,
+            from_user: fromUserId,
+            to_user:   toUserId,
+            amount,
+          })
 
-    // Mark the relevant splits as settled
-    await supabase
-      .from('expense_splits')
-      .update({ is_settled: true })
-      .eq('user_id', fromUserId)
-      .in('expense_id', expenses.map(e => e.id))
+        if (settlementError) throw settlementError
 
-    fetchExpenses()
-  }
+        // Mark splits as settled where:
+        // - the person who owes (from_user) has unsettled splits
+        // - in expenses paid by the person they owe (to_user)
+        const expensesPaidByCreditor = expenses
+          .filter(e => e.paid_by === toUserId)
+          .map(e => e.id)
+
+        if (expensesPaidByCreditor.length > 0) {
+          const { error: splitError } = await supabase
+            .from('expense_splits')
+            .update({ is_settled: true })
+            .eq('user_id', fromUserId)
+            .eq('is_settled', false)
+            .in('expense_id', expensesPaidByCreditor)
+
+          if (splitError) throw splitError
+        }
+
+        // Refresh everything
+        await fetchExpenses()
+
+      } catch (err) {
+        alert(err.message)
+      }
+    }
 
   // Get member name by ID
   function getMemberName(id) {
@@ -305,6 +328,17 @@ export default function GroupDetailPage() {
                         {settledCount}/{expSplits.length} settled
                       </span>
                     </div>
+                    {/* Edit button — only visible to group members */}
+                      <button
+                        onClick={() => setEditingExpense(expense)}
+                        style={{
+                          marginTop: '8px', padding: '6px 14px',
+                          backgroundColor: '#f8fafc', border: '1px solid #e2e8f0',
+                          borderRadius: '8px', fontSize: '12px', color: '#64748b',
+                        }}
+                      >
+                        ✏️ Edit
+                      </button>
                   </div>
                 )
               })}
@@ -496,6 +530,14 @@ export default function GroupDetailPage() {
           groupId={groupId}
           onClose={() => setShowInvite(false)}
           onAdded={fetchMembers}
+        />
+      )}
+      {editingExpense && (
+        <EditGroupExpenseModal
+          expense={editingExpense}
+          members={members}
+          onClose={() => setEditingExpense(null)}
+          onEdited={() => { setEditingExpense(null); fetchExpenses() }}
         />
       )}
     </div>
