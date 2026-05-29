@@ -24,7 +24,11 @@ export default function LoginPage() {
     setLoading(false)
 
     if (error) {
-      setError(error.message)
+      if (error.message.includes('Signups not allowed')) {
+        setError('This app is invite only. Ask the admin to send you an invite.')
+      } else {
+        setError(error.message)
+      }
       return
     }
 
