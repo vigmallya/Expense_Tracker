@@ -123,7 +123,7 @@ export default function GroupDetailPage() {
     setSplits([])
   }
   }
-  
+
   // Delete group — only available to creator
   async function handleDeleteGroup() {
     setDeleting(true)
@@ -351,7 +351,7 @@ export default function GroupDetailPage() {
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: '0', marginTop: '4px' }}>
-          {['expenses', 'balances', 'members', 'history'].map(tab => (
+          {['expenses', 'balances', 'history', 'members'].map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
