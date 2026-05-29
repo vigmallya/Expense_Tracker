@@ -38,28 +38,47 @@ export default function EditGroupExpenseModal({ expense, members, onClose, onEdi
       // Update the expense
       const { error: expenseError } = await supabase
         .from('expenses')
-        .update({ title, amount: parseFloat(amount), category, currency, date, paid_by: paidBy })
+        .update({
+          title,
+          amount:   parseFloat(amount),
+          category,
+          currency,
+          date,
+          paid_by:  paidBy,
+        })
         .eq('id', expense.id)
 
       if (expenseError) throw expenseError
 
-      // Recalculate equal splits with new amount
-      const perPerson = parseFloat((parseFloat(amount) / members.length).toFixed(2))
-      const remainder = parseFloat((parseFloat(amount) - perPerson * members.length).toFixed(2))
+      // Recalculate splits fresh
+      const totalAmount = parseFloat(amount)
+      const count       = members.length
+      const base        = parseFloat((totalAmount / count).toFixed(2))
+      const remainder   = parseFloat((totalAmount - base * count).toFixed(2))
 
-      for (let i = 0; i < members.length; i++) {
-        const member = members[i]
-        const splitAmount = i === 0 ? perPerson + remainder : perPerson
+      // Delete all existing splits for this expense
+      const { error: deleteError } = await supabase
+        .from('expense_splits')
+        .delete()
+        .eq('expense_id', expense.id)
 
-        await supabase
-          .from('expense_splits')
-          .update({
-            amount_owed: splitAmount,
-            is_settled:  member.id === paidBy,
-          })
-          .eq('expense_id', expense.id)
-          .eq('user_id', member.id)
-      }
+      if (deleteError) throw deleteError
+
+      // Recreate splits fresh with new amounts
+      const splitRows = members.map((member, index) => ({
+        expense_id:  expense.id,
+        user_id:     member.id,
+        amount_owed: index === 0
+          ? parseFloat((base + remainder).toFixed(2))
+          : base,
+        is_settled: member.id === paidBy,
+      }))
+
+      const { error: splitError } = await supabase
+        .from('expense_splits')
+        .insert(splitRows)
+
+      if (splitError) throw splitError
 
       onEdited()
       onClose()

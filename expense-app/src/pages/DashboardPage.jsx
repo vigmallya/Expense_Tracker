@@ -37,6 +37,7 @@ function formatDate(dateStr) {
 export default function DashboardPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [expenses, setExpenses]   = useState([])
   const [showModal, setShowModal] = useState(false)
   const [loading, setLoading]     = useState(true)
@@ -45,13 +46,116 @@ export default function DashboardPage() {
   const [selectedYear, setSelectedYear]   = useState(new Date().getFullYear())
   const [budgets, setBudgets] = useState([])
   const [preferredCurrency, setPreferredCurrency] = useState('EUR')
+  const [groupBalances, setGroupBalances] = useState({ owe: 0, owed: 0 })
 
   useEffect(() => {
+    console.log('Dashboard useEffect fired, location:', location.pathname)
     fetchExpenses()
     fetchBudgets()
     fetchPreferredCurrency()
-  }, [selectedMonth, selectedYear])
-  
+    fetchGroupBalances()
+  }, [selectedMonth, selectedYear, location.pathname])
+
+  async function fetchGroupBalances() {
+  // Get all groups I'm in
+  const { data: myGroups } = await supabase
+    .from('group_members')
+    .select('group_id')
+    .eq('user_id', user.id)
+
+  const groupIds = (myGroups || []).map(g => g.group_id)
+    if (groupIds.length === 0) {
+      setGroupBalances({ owe: 0, owed: 0 })
+      return
+    }
+
+    // Get all group expenses
+    const { data: groupExpenses } = await supabase
+      .from('expenses')
+      .select('id, paid_by')
+      .in('group_id', groupIds)
+      .eq('is_personal', false)
+
+    const expenseIds = (groupExpenses || []).map(e => e.id)
+    const payerMap   = {}
+    ;(groupExpenses || []).forEach(e => { payerMap[e.id] = e.paid_by })
+
+    // Only fetch splits if expenses exist
+    let allSplits = []
+    if (expenseIds.length > 0) {
+      const { data: splitData } = await supabase
+        .from('expense_splits')
+        .select('user_id, amount_owed, expense_id')
+        .in('expense_id', expenseIds)
+      allSplits = splitData || []
+    }
+
+    // Always fetch settlements even if no expenses exist
+    const { data: allSettlements } = await supabase
+      .from('settlements')
+      .select('from_user, to_user, amount')
+      .in('group_id', groupIds)
+
+    // Build per-pair owed map
+    const owedMap = {}
+    ;(allSplits || []).forEach(split => {
+      const paidBy = payerMap[split.expense_id]
+      if (!paidBy || paidBy === split.user_id) return
+
+      if (split.user_id === user.id) {
+        const key = `${user.id}__${paidBy}`
+        owedMap[key] = (owedMap[key] || 0) + parseFloat(split.amount_owed)
+      } else if (paidBy === user.id) {
+        const key = `${split.user_id}__${user.id}`
+        owedMap[key] = (owedMap[key] || 0) + parseFloat(split.amount_owed)
+      }
+    })
+
+    // Build per-pair paid map from settlements
+    const paidMap = {}
+    ;(allSettlements || []).forEach(s => {
+      const key = `${s.from_user}__${s.to_user}`
+      paidMap[key] = (paidMap[key] || 0) + parseFloat(s.amount)
+    })
+
+    // Net opposite directions per person pair
+    const allPeople = new Set()
+    Object.keys(owedMap).forEach(key => {
+      const [a, b] = key.split('__')
+      allPeople.add(b === user.id ? a : b)
+    })
+
+    // Also add people from settlements
+    Object.keys(paidMap).forEach(key => {
+      const [a, b] = key.split('__')
+      if (a === user.id) allPeople.add(b)
+      if (b === user.id) allPeople.add(a)
+    })
+    
+
+    let totalOwe  = 0
+    let totalOwed = 0
+
+    allPeople.forEach(personId => {
+      const iOweThem  = (owedMap[`${user.id}__${personId}`] || 0) - (paidMap[`${user.id}__${personId}`] || 0)
+      const theyOweMe = (owedMap[`${personId}__${user.id}`] || 0) - (paidMap[`${personId}__${user.id}`] || 0)
+      const net       = iOweThem - theyOweMe
+
+      if (net > 0.01)       totalOwe  += net
+      else if (net < -0.01) totalOwed += Math.abs(net)
+    })
+
+    console.log('allSplits:', allSplits)
+    console.log('allSettlements:', allSettlements)
+    console.log('owedMap:', owedMap)
+    console.log('paidMap:', paidMap)
+    console.log('result:', { totalOwe, totalOwed })
+    setGroupBalances({
+      owe:  Math.max(0, parseFloat(totalOwe.toFixed(2))),
+      owed: Math.max(0, parseFloat(totalOwed.toFixed(2))),
+    })
+  }
+
   async function fetchExpenses() {
     setLoading(true)
 
@@ -169,155 +273,198 @@ export default function DashboardPage() {
             {expenses.length} expense{expenses.length !== 1 ? 's' : ''} this month
           </p>
         </div>
-
-        <div style={{ padding: '1.5rem' }}>
-
-          {/* ── Budget card — fixed position, always first ── */}
-          <div
-            onClick={() => navigate('/budget')}
-            style={{
-              padding: '14px 16px', backgroundColor: 'white',
-              borderRadius: '12px', border: '1px solid #f1f5f9',
-              cursor: 'pointer', marginBottom: '1.5rem',
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            }}
-          >
-            <div>
-              <p style={{ fontSize: '13px', fontWeight: '600', marginBottom: '4px' }}>
-                📊 Monthly budget
-              </p>
-              <p style={{ fontSize: '12px', color: '#94a3b8' }}>
-                {budgets.length > 0
-                  ? `${budgets.length} categor${budgets.length === 1 ? 'y' : 'ies'} · €${budgets.reduce((s, b) => s + parseFloat(b.monthly_limit), 0).toFixed(2)} budgeted`
-                  : 'Tap to set your budgets'
-                }
-              </p>
-            </div>
-            <span style={{ fontSize: '18px', color: '#94a3b8' }}>›</span>
+      
+      {/* ── Group balances card ── */}
+      <div style={{ padding: '1.5rem' }}>
+      {(groupBalances.owe > 0 || groupBalances.owed > 0) && (
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr',
+          gap: '10px', marginTop: '1.5rem',
+        }}>
+          <div style={{
+            padding: '14px', backgroundColor: 'white',
+            borderRadius: '12px',
+            border: groupBalances.owe > 0 ? '1px solid #fed7aa' : '1px solid #f1f5f9',
+            backgroundColor: groupBalances.owe > 0 ? '#fef9f0' : 'white',
+          }}>
+            <p style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>
+              You owe
+            </p>
+            <p style={{ fontSize: '20px', fontWeight: '700', color: groupBalances.owe > 0 ? '#dc2626' : '#94a3b8' }}>
+              {currencySymbol(preferredCurrency)}{groupBalances.owe.toFixed(2)}
+            </p>
+            <p style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>
+              across all groups
+            </p>
           </div>
+          <div style={{
+            padding: '14px',
+            borderRadius: '12px',
+            border: groupBalances.owed > 0 ? '1px solid #bbf7d0' : '1px solid #f1f5f9',
+            backgroundColor: groupBalances.owed > 0 ? '#f0fdf4' : 'white',
+          }}>
+            <p style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>
+              Owed to you
+            </p>
+            <p style={{ fontSize: '20px', fontWeight: '700', color: groupBalances.owed > 0 ? '#16a34a' : '#94a3b8' }}>
+              {currencySymbol(preferredCurrency)}{groupBalances.owed.toFixed(2)}
+            </p>
+            <p style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>
+              across all groups
+            </p>
+          </div>
+        </div>
+      )}
+      </div>
 
-          {/* ── Category breakdown with budget limits ── */}
-          {Object.keys(byCategory).length > 0 && (
-            <div style={{ marginBottom: '2rem' }}>
-              <h2 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '12px' }}>
-                By category
-              </h2>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {Object.values(byCategory)
-                  .sort((a, b) => b.amount - a.amount)
-                  .map(({ category, symbol, amount }) => {
-                    // Only show budget for preferred currency entries
-                    const isPreferred = symbol === currencySymbol(preferredCurrency)
-                    const budget  = isPreferred ? budgets.find(b => b.category === category) : null
-                    const limit   = budget ? parseFloat(budget.monthly_limit) : 0
-                    const percent = limit > 0 ? Math.min((amount / limit) * 100, 100) : 0
-                    const over    = limit > 0 && amount > limit
+      <div style={{ padding: '1.5rem' }}>
 
-                    return (
-                      <div key={`${category}__${symbol}`}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                          <span style={{ fontSize: '13px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span>{categoryIcon(category)}</span>
-                            {category}
-                            <span style={{ fontSize: '11px', color: '#94a3b8' }}>{symbol}</span>
-                          </span>
-                          <span style={{ fontSize: '13px', fontWeight: '500', color: over ? '#dc2626' : '#0f172a' }}>
-                            {symbol}{amount.toFixed(2)}
-                            {limit > 0 && (
-                              <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '400' }}>
-                                {' '}/ {symbol}{limit.toFixed(2)}
-                              </span>
-                            )}
-                          </span>
-                        </div>
-                        <div style={{ height: '6px', backgroundColor: '#f1f5f9', borderRadius: '99px' }}>
-                          <div style={{
-                            height: '100%',
-                            width: limit > 0
-                              ? `${percent}%`
-                              : grandTotal > 0 ? `${(amount / grandTotal) * 100}%` : '0%',
-                            backgroundColor: over ? '#dc2626'
-                              : percent >= 80 ? '#f59e0b'
-                              : CATEGORY_COLORS[category] || '#94a3b8',
-                            borderRadius: '99px',
-                            opacity: limit > 0 ? 1 : 0.4,
-                            transition: 'width 0.4s ease',
-                          }} />
-                        </div>
-                        {over && (
-                          <p style={{ fontSize: '11px', color: '#dc2626', marginTop: '2px' }}>
-                            Over by {symbol}{(amount - limit).toFixed(2)}
-                          </p>
-                        )}
+        {/* ── Budget card — fixed position, always first ── */}
+        <div
+          onClick={() => navigate('/budget')}
+          style={{
+            padding: '14px 16px', backgroundColor: 'white',
+            borderRadius: '12px', border: '1px solid #f1f5f9',
+            cursor: 'pointer', marginBottom: '1.5rem',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          }}
+        >
+          <div>
+            <p style={{ fontSize: '13px', fontWeight: '600', marginBottom: '4px' }}>
+              📊 Monthly budget
+            </p>
+            <p style={{ fontSize: '12px', color: '#94a3b8' }}>
+              {budgets.length > 0
+                ? `${budgets.length} categor${budgets.length === 1 ? 'y' : 'ies'} · €${budgets.reduce((s, b) => s + parseFloat(b.monthly_limit), 0).toFixed(2)} budgeted`
+                : 'Tap to set your budgets'
+              }
+            </p>
+          </div>
+          <span style={{ fontSize: '18px', color: '#94a3b8' }}>›</span>
+        </div>
+
+        {/* ── Category breakdown with budget limits ── */}
+        {Object.keys(byCategory).length > 0 && (
+          <div style={{ marginBottom: '2rem' }}>
+            <h2 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '12px' }}>
+              By category
+            </h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {Object.values(byCategory)
+                .sort((a, b) => b.amount - a.amount)
+                .map(({ category, symbol, amount }) => {
+                  // Only show budget for preferred currency entries
+                  const isPreferred = symbol === currencySymbol(preferredCurrency)
+                  const budget  = isPreferred ? budgets.find(b => b.category === category) : null
+                  const limit   = budget ? parseFloat(budget.monthly_limit) : 0
+                  const percent = limit > 0 ? Math.min((amount / limit) * 100, 100) : 0
+                  const over    = limit > 0 && amount > limit
+
+                  return (
+                    <div key={`${category}__${symbol}`}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                        <span style={{ fontSize: '13px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span>{categoryIcon(category)}</span>
+                          {category}
+                          <span style={{ fontSize: '11px', color: '#94a3b8' }}>{symbol}</span>
+                        </span>
+                        <span style={{ fontSize: '13px', fontWeight: '500', color: over ? '#dc2626' : '#0f172a' }}>
+                          {symbol}{amount.toFixed(2)}
+                          {limit > 0 && (
+                            <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '400' }}>
+                              {' '}/ {symbol}{limit.toFixed(2)}
+                            </span>
+                          )}
+                        </span>
                       </div>
-                    )
-                  })}
-              </div>
+                      <div style={{ height: '6px', backgroundColor: '#f1f5f9', borderRadius: '99px' }}>
+                        <div style={{
+                          height: '100%',
+                          width: limit > 0
+                            ? `${percent}%`
+                            : grandTotal > 0 ? `${(amount / grandTotal) * 100}%` : '0%',
+                          backgroundColor: over ? '#dc2626'
+                            : percent >= 80 ? '#f59e0b'
+                            : CATEGORY_COLORS[category] || '#94a3b8',
+                          borderRadius: '99px',
+                          opacity: limit > 0 ? 1 : 0.4,
+                          transition: 'width 0.4s ease',
+                        }} />
+                      </div>
+                      {over && (
+                        <p style={{ fontSize: '11px', color: '#dc2626', marginTop: '2px' }}>
+                          Over by {symbol}{(amount - limit).toFixed(2)}
+                        </p>
+                      )}
+                    </div>
+                  )
+                })}
+            </div>
+          </div>
+        )}
+
+        {/* ── Recent expenses ── */}
+        <div>
+          <h2 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '12px' }}>Recent</h2>
+
+          {loading && <p style={{ color: '#94a3b8', fontSize: '14px' }}>Loading...</p>}
+
+          {!loading && expenses.length === 0 && (
+            <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94a3b8' }}>
+              <p style={{ fontSize: '32px', marginBottom: '8px' }}>💸</p>
+              <p style={{ fontSize: '14px' }}>No expenses this month yet</p>
+              <p style={{ fontSize: '13px', marginTop: '4px' }}>Tap + to add your first one</p>
             </div>
           )}
 
-          {/* ── Recent expenses ── */}
-          <div>
-            <h2 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '12px' }}>Recent</h2>
-
-            {loading && <p style={{ color: '#94a3b8', fontSize: '14px' }}>Loading...</p>}
-
-            {!loading && expenses.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '3rem 0', color: '#94a3b8' }}>
-                <p style={{ fontSize: '32px', marginBottom: '8px' }}>💸</p>
-                <p style={{ fontSize: '14px' }}>No expenses this month yet</p>
-                <p style={{ fontSize: '13px', marginTop: '4px' }}>Tap + to add your first one</p>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {expenses.slice(0, 10).map(expense => (
-                <div
-                  key={expense.id}
-                  onClick={() => setSelectedExpense(expense)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '12px',
-                    padding: '12px', backgroundColor: 'white',
-                    borderRadius: '12px', border: '1px solid #f1f5f9',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <div style={{
-                    width: '40px', height: '40px', borderRadius: '10px', flexShrink: 0,
-                    backgroundColor: (CATEGORY_COLORS[expense.category] || '#94a3b8') + '20',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: '18px',
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {expenses.slice(0, 10).map(expense => (
+              <div
+                key={expense.id}
+                onClick={() => setSelectedExpense(expense)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '12px',
+                  padding: '12px', backgroundColor: 'white',
+                  borderRadius: '12px', border: '1px solid #f1f5f9',
+                  cursor: 'pointer',
+                }}
+              >
+                <div style={{
+                  width: '40px', height: '40px', borderRadius: '10px', flexShrink: 0,
+                  backgroundColor: (CATEGORY_COLORS[expense.category] || '#94a3b8') + '20',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '18px',
+                }}>
+                  {categoryIcon(expense.category)}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{
+                    fontSize: '14px', fontWeight: '500',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
                   }}>
-                    {categoryIcon(expense.category)}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{
-                      fontSize: '14px', fontWeight: '500',
-                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
-                    }}>
-                      {expense.title}
-                    </p>
-                    <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>
-                      {expense.category} · {formatDate(expense.date)}
-                    </p>
-                  </div>
-                  <p style={{ fontSize: '15px', fontWeight: '600', flexShrink: 0 }}>
-                    {currencySymbol(expense.currency)}{parseFloat(expense.amount).toFixed(2)}
+                    {expense.title}
+                  </p>
+                  <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>
+                    {expense.category} · {formatDate(expense.date)}
                   </p>
                 </div>
-              ))}
-            </div>
-
-            {expenses.length > 10 && (
-              <p
-                style={{ textAlign: 'center', marginTop: '16px', fontSize: '13px', color: '#3b82f6', cursor: 'pointer' }}
-                onClick={() => navigate('/expenses')}
-              >
-                View all {expenses.length} expenses →
-              </p>
-            )}
+                <p style={{ fontSize: '15px', fontWeight: '600', flexShrink: 0 }}>
+                  {currencySymbol(expense.currency)}{parseFloat(expense.amount).toFixed(2)}
+                </p>
+              </div>
+            ))}
           </div>
+
+          {expenses.length > 10 && (
+            <p
+              style={{ textAlign: 'center', marginTop: '16px', fontSize: '13px', color: '#3b82f6', cursor: 'pointer' }}
+              onClick={() => navigate('/expenses')}
+            >
+              View all {expenses.length} expenses →
+            </p>
+          )}
         </div>
+      </div>
 
       {/* ── Floating add button ── */}
       <button
