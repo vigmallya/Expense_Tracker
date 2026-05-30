@@ -27,6 +27,59 @@ function formatDate(dateStr) {
   return date.toLocaleDateString('default', { day: 'numeric', month: 'short' })
 }
 
+function ViewReceiptButton({ url }) {
+  const [lightbox, setLightbox] = useState(false)
+
+  return (
+    <>
+      <div
+        onClick={e => { e.stopPropagation(); setLightbox(true) }}
+        style={{
+          marginTop: '8px',
+          display: 'inline-flex', alignItems: 'center', gap: '6px',
+          padding: '4px 10px',
+          backgroundColor: '#f8fafc',
+          border: '1px solid #e2e8f0',
+          borderRadius: '99px', cursor: 'pointer',
+        }}
+      >
+        <span style={{ fontSize: '14px' }}>🧾</span>
+        <span style={{ fontSize: '12px', color: '#64748b' }}>View receipt</span>
+      </div>
+
+      {lightbox && (
+        <div
+          onClick={() => setLightbox(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 300,
+            backgroundColor: 'rgba(0,0,0,0.9)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '1rem',
+          }}
+        >
+          <button
+            onClick={() => setLightbox(false)}
+            style={{
+              position: 'absolute', top: '1rem', right: '1rem',
+              background: 'none', border: 'none',
+              color: 'white', fontSize: '28px', cursor: 'pointer',
+            }}
+          >✕</button>
+          <img
+            src={url}
+            alt="Receipt"
+            style={{
+              maxWidth: '100%', maxHeight: '90vh',
+              borderRadius: '8px', objectFit: 'contain',
+            }}
+            onClick={e => e.stopPropagation()}
+          />
+        </div>
+      )}
+    </>
+  )
+}
+
 export default function GroupDetailPage() {
   const { id: groupId }   = useParams()
   const { user }          = useAuth()
@@ -482,23 +535,7 @@ export default function GroupDetailPage() {
                       </div>
                       {/* Receipt thumbnail if exists */}
                       {expense.receipt_url && (
-                        <div
-                          onClick={e => {
-                            e.stopPropagation()
-                            window.open(expense.receipt_url, '_blank')
-                          }}
-                          style={{
-                            marginTop: '8px',
-                            display: 'inline-flex', alignItems: 'center', gap: '6px',
-                            padding: '4px 10px',
-                            backgroundColor: '#f8fafc',
-                            border: '1px solid #e2e8f0',
-                            borderRadius: '99px', cursor: 'pointer',
-                          }}
-                        >
-                          <span style={{ fontSize: '14px' }}>🧾</span>
-                          <span style={{ fontSize: '12px', color: '#64748b' }}>View receipt</span>
-                        </div>
+                        <ViewReceiptButton url={expense.receipt_url} />
                       )}
                     </div>
                   )

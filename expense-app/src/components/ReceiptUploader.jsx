@@ -2,7 +2,7 @@ import { useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 
-export default function ReceiptUploader({ receiptUrl, onUploaded, onRemoved }) {
+export default function ReceiptUploader({ receiptUrl, onUploaded, onRemoved, readOnly = false  }) {
   const { user }            = useAuth()
   const [uploading, setUploading] = useState(false)
   const [lightbox, setLightbox]   = useState(false)
@@ -83,7 +83,7 @@ export default function ReceiptUploader({ receiptUrl, onUploaded, onRemoved }) {
         {receiptUrl ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
 
-            {/* Thumbnail — tap to open lightbox */}
+            {/* Thumbnail — always visible */}
             <div
               onClick={() => setLightbox(true)}
               style={{
@@ -98,7 +98,6 @@ export default function ReceiptUploader({ receiptUrl, onUploaded, onRemoved }) {
                 alt="Receipt"
                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
               />
-              {/* View icon overlay */}
               <div style={{
                 position: 'absolute', inset: 0,
                 backgroundColor: 'rgba(0,0,0,0.2)',
@@ -108,56 +107,61 @@ export default function ReceiptUploader({ receiptUrl, onUploaded, onRemoved }) {
               </div>
             </div>
 
-            {/* Change button */}
+            {/* Change + Remove — only in edit mode */}
+            {!readOnly && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => inputRef.current?.click()}
+                  disabled={uploading}
+                  style={{
+                    padding: '6px 14px',
+                    backgroundColor: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '8px', fontSize: '13px',
+                    color: '#64748b', cursor: 'pointer',
+                  }}
+                >
+                  {uploading ? 'Uploading...' : '↺ Change'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleRemove}
+                  style={{
+                    padding: '6px 14px',
+                    backgroundColor: '#fef2f2',
+                    border: '1px solid #fecaca',
+                    borderRadius: '8px', fontSize: '13px',
+                    color: '#dc2626', cursor: 'pointer',
+                  }}
+                >
+                  ✕ Remove
+                </button>
+              </>
+            )}
+          </div>
+        ) : (
+          // Upload button — only in edit mode
+          !readOnly && (
             <button
               type="button"
               onClick={() => inputRef.current?.click()}
               disabled={uploading}
               style={{
-                padding: '6px 14px',
+                display: 'flex', alignItems: 'center', gap: '8px',
+                padding: '10px 16px',
                 backgroundColor: '#f8fafc',
-                border: '1px solid #e2e8f0',
-                borderRadius: '8px', fontSize: '13px',
+                border: '1px dashed #cbd5e1',
+                borderRadius: '10px', fontSize: '13px',
                 color: '#64748b', cursor: 'pointer',
+                width: '100%', justifyContent: 'center',
               }}
             >
-              {uploading ? 'Uploading...' : '↺ Change'}
+              <span style={{ fontSize: '18px' }}>📷</span>
+              {uploading ? 'Uploading...' : 'Add receipt photo'}
             </button>
-
-            {/* Remove button */}
-            <button
-              type="button"
-              onClick={handleRemove}
-              style={{
-                padding: '6px 14px',
-                backgroundColor: '#fef2f2',
-                border: '1px solid #fecaca',
-                borderRadius: '8px', fontSize: '13px',
-                color: '#dc2626', cursor: 'pointer',
-              }}
-            >
-              ✕ Remove
-            </button>
-          </div>
-        ) : (
-          // Upload button
-          <button
-            type="button"
-            onClick={() => inputRef.current?.click()}
-            disabled={uploading}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '8px',
-              padding: '10px 16px',
-              backgroundColor: '#f8fafc',
-              border: '1px dashed #cbd5e1',
-              borderRadius: '10px', fontSize: '13px',
-              color: '#64748b', cursor: 'pointer',
-              width: '100%', justifyContent: 'center',
-            }}
-          >
-            <span style={{ fontSize: '18px' }}>📷</span>
-            {uploading ? 'Uploading...' : 'Add receipt photo'}
-          </button>
+          )
         )}
       </div>
 

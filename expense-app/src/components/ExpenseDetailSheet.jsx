@@ -166,6 +166,7 @@ export default function ExpenseDetailSheet({ expense, onClose, onDeleted, onEdit
                     receiptUrl={expense.receipt_url}
                     onUploaded={() => {}}
                     onRemoved={() => {}}
+                    readOnly={true}
                   />
                 </div>
               )}
