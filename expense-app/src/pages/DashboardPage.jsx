@@ -285,7 +285,7 @@ export default function DashboardPage() {
           ))}
 
           {Object.keys(totalsByCurrency).length === 0 && (
-            <h1 style={{ fontSize: '40px', fontWeight: '700', margin: '4px 0 0' }}>€0.00</h1>
+            <h1 style={{ fontSize: '40px', fontWeight: '700', margin: '4px 0 0' }}>{currencySymbol(preferredCurrency)}0.00</h1>
           )}
 
           <p style={{ fontSize: '12px', opacity: 0.5, marginTop: '8px' }}>
@@ -293,9 +293,9 @@ export default function DashboardPage() {
           </p>
         </div>
       
-      {/* ── Group balances card ── */}
-      <div style={{ padding: '1.5rem' }}>
+      {/* ── Group balances card ── */}     
       {(groupBalances.owe > 0 || groupBalances.owed > 0) && (
+        <div style={{ paddingTop: '1.5rem', paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
         <div style={{
           display: 'grid', gridTemplateColumns: '1fr 1fr',
           gap: '10px', marginTop: '1.5rem',
@@ -333,8 +333,9 @@ export default function DashboardPage() {
             </p>
           </div>
         </div>
+        </div>
       )}
-      </div>
+      
 
       <div style={{ padding: '1.5rem' }}>
 
@@ -354,7 +355,7 @@ export default function DashboardPage() {
             </p>
             <p style={{ fontSize: '12px', color: '#94a3b8' }}>
               {budgets.length > 0
-                ? `${budgets.length} categor${budgets.length === 1 ? 'y' : 'ies'} · €${budgets.reduce((s, b) => s + parseFloat(b.monthly_limit), 0).toFixed(2)} budgeted`
+                ? `${budgets.length} categor${budgets.length === 1 ? 'y' : 'ies'} · ${currencySymbol(preferredCurrency)}${budgets.reduce((s, b) => s + parseFloat(b.monthly_limit), 0).toFixed(2)} budgeted`
                 : 'Tap to set your budgets'
               }
             </p>
