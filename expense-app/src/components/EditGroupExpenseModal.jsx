@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
+import ReceiptUploader from './ReceiptUploader'
 
 const CATEGORIES = ['Food', 'Transport', 'Housing', 'Shopping', 'Health', 'Entertainment', 'Other']
 const symbols = { EUR: '€', INR: '₹', USD: '$' }
@@ -15,6 +16,7 @@ export default function EditGroupExpenseModal({ expense, members, onClose, onEdi
   const [error, setError]       = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting]           = useState(false)
+  const [receiptUrl, setReceiptUrl] = useState(expense.receipt_url || '')
 
   async function handleDelete() {
     setDeleting(true)
@@ -45,6 +47,7 @@ export default function EditGroupExpenseModal({ expense, members, onClose, onEdi
           currency,
           date,
           paid_by:  paidBy,
+          receipt_url: receiptUrl || null,
         })
         .eq('id', expense.id)
 
@@ -207,6 +210,14 @@ export default function EditGroupExpenseModal({ expense, members, onClose, onEdi
                 >{m.name}</button>
               ))}
             </div>
+          </div>
+
+          <div style={{ marginBottom: '1.5rem' }}>
+            <ReceiptUploader
+              receiptUrl={receiptUrl}
+              onUploaded={url => setReceiptUrl(url)}
+              onRemoved={() => setReceiptUrl('')}
+            />
           </div>
 
           {error && (

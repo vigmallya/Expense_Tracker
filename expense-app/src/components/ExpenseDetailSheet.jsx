@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
+import ReceiptUploader from './ReceiptUploader'
 
 const CATEGORIES = ['Food', 'Transport', 'Housing', 'Shopping', 'Health', 'Entertainment', 'Other']
 const CATEGORY_COLORS = {
@@ -48,6 +49,7 @@ export default function ExpenseDetailSheet({ expense, onClose, onDeleted, onEdit
   const [currency, setCurrency] = useState(expense.currency)
   const [date, setDate]         = useState(expense.date)
   const [note, setNote]         = useState(expense.note || '')
+  const [receiptUrl, setReceiptUrl] = useState(expense.receipt_url || '')
 
   const color = CATEGORY_COLORS[expense.category] || '#94a3b8'
 
@@ -83,6 +85,7 @@ export default function ExpenseDetailSheet({ expense, onClose, onDeleted, onEdit
         currency,
         date,
         note,
+        receipt_url: receiptUrl || null,
       })
       .eq('id', expense.id)
 
@@ -156,6 +159,16 @@ export default function ExpenseDetailSheet({ expense, onClose, onDeleted, onEdit
                   day: 'numeric', month: 'short', year: 'numeric'
                 })}
               />
+              {/* Receipt preview — only shown if a receipt exists */}
+              {expense.receipt_url && (
+                <div style={{ marginTop: '12px' }}>
+                  <ReceiptUploader
+                    receiptUrl={expense.receipt_url}
+                    onUploaded={() => {}}
+                    onRemoved={() => {}}
+                  />
+                </div>
+              )}
             </div>
 
             {/* Actions */}
@@ -346,6 +359,14 @@ export default function ExpenseDetailSheet({ expense, onClose, onDeleted, onEdit
                     border: '1px solid #e2e8f0', borderRadius: '10px',
                     outline: 'none', resize: 'none', boxSizing: 'border-box',
                   }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '1.5rem' }}>
+                <ReceiptUploader
+                  receiptUrl={receiptUrl}
+                  onUploaded={url => setReceiptUrl(url)}
+                  onRemoved={() => setReceiptUrl('')}
                 />
               </div>
 

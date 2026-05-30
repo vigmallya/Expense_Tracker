@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import ReceiptUploader from './ReceiptUploader'
 
 const CATEGORIES = [
   'Food', 'Transport', 'Housing',
@@ -19,12 +20,14 @@ export default function AddExpenseModal({ onClose, onAdded }) {
   const [note, setNote]         = useState('')
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState('')
+  const [receiptUrl, setReceiptUrl] = useState('')
 
   async function handleSubmit(e) {
     e.preventDefault()
     if (!title || !amount) return
     setLoading(true)
     setError('')
+
 
     const { error } = await supabase.from('expenses').insert({
       title,
@@ -35,6 +38,7 @@ export default function AddExpenseModal({ onClose, onAdded }) {
       note,
       paid_by: user.id,
       is_personal: true,
+      receipt_url: receiptUrl || null,
     })
 
     setLoading(false)
@@ -163,6 +167,15 @@ export default function AddExpenseModal({ onClose, onAdded }) {
                 border: '1px solid #e2e8f0', borderRadius: '10px',
                 outline: 'none',
               }}
+            />
+          </div>
+
+          {/* Receipt */}
+          <div style={{ marginBottom: '1.5rem' }}>
+            <ReceiptUploader
+              receiptUrl={receiptUrl}
+              onUploaded={url => setReceiptUrl(url)}
+              onRemoved={() => setReceiptUrl('')}
             />
           </div>
 
