@@ -5,6 +5,37 @@
       "dest": "/assets/$1"
     },
     {
+      "src": "/icons/(.*)",
+      "dest": "/icons/$1"
+    },
+    {
+      "src": "/manifest.webmanifest",
+      "dest": "/manifest.webmanifest",
+      "headers": {
+        "Content-Type": "application/manifest+json"
+      }
+    },
+    {
+      "src": "/sw.js",
+      "dest": "/sw.js"
+    },
+    {
+      "src": "/registerSW.js",
+      "dest": "/registerSW.js"
+    },
+    {
+      "src": "/workbox-(.*)",
+      "dest": "/workbox-$1"
+    },
+    {
+      "src": "/favicon.ico",
+      "dest": "/favicon.ico"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "dest": "/apple-touch-icon.png"
+    },
+    {
       "src": "/(.*)",
       "dest": "/index.html"
     }

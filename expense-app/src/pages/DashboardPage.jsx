@@ -55,7 +55,6 @@ export default function DashboardPage() {
   const [groupMembers, setGroupMembers]         = useState([])
 
   useEffect(() => {
-    console.log('Dashboard useEffect fired, location:', location.pathname)
     fetchExpenses()
     fetchBudgets()
     fetchPreferredCurrency()
@@ -164,11 +163,6 @@ export default function DashboardPage() {
       else if (net < -0.01) totalOwed += Math.abs(net)
     })
 
-    console.log('allSplits:', allSplits)
-    console.log('allSettlements:', allSettlements)
-    console.log('owedMap:', owedMap)
-    console.log('paidMap:', paidMap)
-    console.log('result:', { totalOwe, totalOwed })
     setGroupBalances({
       owe:  Math.max(0, parseFloat(totalOwe.toFixed(2))),
       owed: Math.max(0, parseFloat(totalOwed.toFixed(2))),
