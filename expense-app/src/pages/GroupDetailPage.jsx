@@ -480,6 +480,26 @@ export default function GroupDetailPage() {
                           ✏️ Edit
                         </button>
                       </div>
+                      {/* Receipt thumbnail if exists */}
+                      {expense.receipt_url && (
+                        <div
+                          onClick={e => {
+                            e.stopPropagation()
+                            window.open(expense.receipt_url, '_blank')
+                          }}
+                          style={{
+                            marginTop: '8px',
+                            display: 'inline-flex', alignItems: 'center', gap: '6px',
+                            padding: '4px 10px',
+                            backgroundColor: '#f8fafc',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '99px', cursor: 'pointer',
+                          }}
+                        >
+                          <span style={{ fontSize: '14px' }}>🧾</span>
+                          <span style={{ fontSize: '12px', color: '#64748b' }}>View receipt</span>
+                        </div>
+                      )}
                     </div>
                   )
                 })}

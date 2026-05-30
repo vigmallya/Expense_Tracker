@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { calculateEqualSplit, validateCustomSplit } from '../utils/splitCalculator'
+import ReceiptUploader from './ReceiptUploader'
 
 const CATEGORIES = ['Food', 'Transport', 'Housing', 'Shopping', 'Health', 'Entertainment', 'Other']
 const symbols = { EUR: '€', INR: '₹', USD: '$' }
@@ -22,6 +23,7 @@ export default function AddGroupExpenseModal({ groupId, members, onClose, onAdde
   )
   const [loading, setLoading]     = useState(false)
   const [error, setError]         = useState('')
+  const [receiptUrl, setReceiptUrl] = useState('')
 
   // Update a single custom split amount
   function updateCustomSplit(userId, value) {
@@ -69,6 +71,7 @@ export default function AddGroupExpenseModal({ groupId, members, onClose, onAdde
           paid_by: paidBy,
           group_id: groupId,
           is_personal: false,
+          receipt_url: receiptUrl || null,
         })
         .select()
         .single()
@@ -279,6 +282,14 @@ export default function AddGroupExpenseModal({ groupId, members, onClose, onAdde
               ))}
             </div>
           )}
+
+          <div style={{ marginBottom: '1.5rem' }}>
+            <ReceiptUploader
+              receiptUrl={receiptUrl}
+              onUploaded={url => setReceiptUrl(url)}
+              onRemoved={() => setReceiptUrl('')}
+            />
+          </div>
 
           {error && (
             <p style={{
