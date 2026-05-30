@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext'
 import BottomNav from '../components/BottomNav'
 import AddExpenseModal from '../components/AddExpenseModal'
 import ExpenseDetailSheet from '../components/ExpenseDetailSheet'
+import QuickAddSheet from '../components/QuickAddSheet'
+import AddGroupExpenseModal from '../components/AddGroupExpenseModal'
 
 const CATEGORIES = ['All', 'Food', 'Transport', 'Housing', 'Shopping', 'Health', 'Entertainment', 'Other']
 
@@ -47,6 +49,10 @@ export default function ExpensesPage() {
   const [sortBy, setSortBy]               = useState('date_desc')
   const [showModal, setShowModal]         = useState(false)
   const [selectedExpense, setSelectedExpense] = useState(null)
+  const [showQuickAdd, setShowQuickAdd]     = useState(false)
+  const [showGroupModal, setShowGroupModal] = useState(false)
+  const [selectedGroup, setSelectedGroup]   = useState(null)
+  const [groupMembers, setGroupMembers]     = useState([])
 
   useEffect(() => { fetchExpenses() }, [])
 
@@ -54,6 +60,18 @@ export default function ExpensesPage() {
     applyFilters()
   }, [expenses, search, activeCategory, activeCurrency, sortBy])
 
+  async function fetchGroupMembers(groupId) {
+    const { data } = await supabase
+      .from('group_members')
+      .select(`user_id, profiles(id, name, email)`)
+      .eq('group_id', groupId)
+
+    return (data || []).map(row => ({
+      id:    row.profiles.id,
+      name:  row.profiles.name,
+      email: row.profiles.email,
+    }))
+  }
   async function fetchExpenses() {
     setLoading(true)
     const { data } = await supabase
@@ -141,7 +159,7 @@ export default function ExpensesPage() {
             </p>
           </div>
           <button
-            onClick={() => setShowModal(true)}
+            onClick={() => setShowQuickAdd(true)}
             style={{
               width: '40px', height: '40px', borderRadius: '50%',
               backgroundColor: 'white', color: '#0f172a',
@@ -371,6 +389,27 @@ export default function ExpensesPage() {
           onClose={() => setSelectedExpense(null)}
           onDeleted={fetchExpenses}
           onEdited={() => {setSelectedExpense(null); fetchExpenses()}}
+        />
+      )}
+      {showQuickAdd && (
+        <QuickAddSheet
+          onPersonal={() => { setShowModal(true) }}
+          onGroup={async (group) => {
+            const members = await fetchGroupMembers(group.id)
+            setSelectedGroup(group)
+            setGroupMembers(members)
+            setShowGroupModal(true)
+          }}
+          onClose={() => setShowQuickAdd(false)}
+        />
+      )}
+
+      {showGroupModal && selectedGroup && (
+        <AddGroupExpenseModal
+          groupId={selectedGroup.id}
+          members={groupMembers}
+          onClose={() => { setShowGroupModal(false); setSelectedGroup(null) }}
+          onAdded={() => { fetchExpenses(); fetchGroupBalances() }}
         />
       )}
 
