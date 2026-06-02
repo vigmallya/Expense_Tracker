@@ -99,6 +99,9 @@ export default function GroupDetailPage() {
   const [settlements, setSettlements] = useState([])
   const [paidByFilter, setPaidByFilter] = useState('all')
   const [settleTarget, setSettleTarget] = useState(null) // { from, to, amount }
+  const [editingName, setEditingName]   = useState(false)
+  const [newGroupName, setNewGroupName] = useState('')
+  const [savingName, setSavingName]     = useState(false)
 
   useEffect(() => { fetchAll() }, [groupId])
 
@@ -106,6 +109,22 @@ export default function GroupDetailPage() {
     setLoading(true)
     await Promise.all([fetchGroup(), fetchMembers(), fetchExpenses(), fetchSettlements()])
     setLoading(false)
+  }
+
+  async function handleSaveGroupName() {
+    if (!newGroupName.trim()) return
+    setSavingName(true)
+
+    const { error } = await supabase
+      .from('groups')
+      .update({ name: newGroupName.trim() })
+      .eq('id', groupId)
+
+    setSavingName(false)
+    if (error) { alert(error.message); return }
+
+    setEditingName(false)
+    fetchGroup()
   }
 
   // Fetch group details
@@ -368,14 +387,64 @@ export default function GroupDetailPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px' }}>
           <button
             onClick={() => navigate('/groups')}
-            style={{
-              background: 'none', border: 'none', color: 'white',
-              fontSize: '20px', padding: '0', cursor: 'pointer',
-            }}
-          >
-            ←
-          </button>
-          <h1 style={{ fontSize: '22px', fontWeight: '700' }}>{group.name}</h1>
+            style={{ background: 'none', border: 'none', color: 'white', fontSize: '20px', cursor: 'pointer' }}
+          >←</button>
+
+          {editingName ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+              <input
+                value={newGroupName}
+                onChange={e => setNewGroupName(e.target.value)}
+                autoFocus
+                style={{
+                  flex: 1, padding: '6px 10px', fontSize: '18px', fontWeight: '700',
+                  backgroundColor: 'rgba(255,255,255,0.15)',
+                  border: '1px solid rgba(255,255,255,0.3)',
+                  borderRadius: '8px', color: 'white', outline: 'none',
+                }}
+              />
+              <button
+                onClick={handleSaveGroupName}
+                disabled={savingName}
+                style={{
+                  padding: '6px 14px', backgroundColor: 'white',
+                  color: '#0f172a', border: 'none',
+                  borderRadius: '8px', fontSize: '13px',
+                  fontWeight: '600', cursor: 'pointer',
+                  opacity: savingName ? 0.7 : 1,
+                }}
+              >
+                {savingName ? '...' : 'Save'}
+              </button>
+              <button
+                onClick={() => setEditingName(false)}
+                style={{
+                  padding: '6px 10px', background: 'none',
+                  border: '1px solid rgba(255,255,255,0.3)',
+                  borderRadius: '8px', color: 'white',
+                  fontSize: '13px', cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+              <h1 style={{ fontSize: '22px', fontWeight: '700' }}>{group.name}</h1>
+              {isAdmin && (
+                <button
+                  onClick={() => { setNewGroupName(group.name); setEditingName(true) }}
+                  style={{
+                    background: 'none', border: 'none',
+                    fontSize: '16px', cursor: 'pointer',
+                    opacity: 0.7,
+                  }}
+                >
+                  ✏️
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {group.description && (

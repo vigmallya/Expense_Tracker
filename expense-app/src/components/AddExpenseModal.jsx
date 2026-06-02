@@ -170,6 +170,25 @@ export default function AddExpenseModal({ onClose, onAdded }) {
             />
           </div>
 
+          {/* Note */}
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ fontSize: '13px', color: '#64748b', display: 'block', marginBottom: '6px' }}>
+              Note (optional)
+            </label>
+            <textarea
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              placeholder="Any extra details..."
+              rows={2}
+              style={{
+                width: '100%', padding: '10px 12px', fontSize: '14px',
+                border: '1px solid #e2e8f0', borderRadius: '10px',
+                outline: 'none', resize: 'none',
+                boxSizing: 'border-box', fontFamily: 'inherit',
+              }}
+            />
+          </div>
+
           {/* Receipt */}
           <div style={{ marginBottom: '1.5rem' }}>
             <ReceiptUploader
