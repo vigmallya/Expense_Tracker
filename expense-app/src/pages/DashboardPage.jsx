@@ -54,13 +54,35 @@ export default function DashboardPage() {
   const [showGroupModal, setShowGroupModal]     = useState(false)
   const [selectedGroup, setSelectedGroup]       = useState(null)
   const [groupMembers, setGroupMembers]         = useState([])
+  const [monthlyIncome, setMonthlyIncome] = useState({})
 
   useEffect(() => {
     fetchExpenses()
     fetchBudgets()
     fetchPreferredCurrency()
     fetchGroupBalances()
+    fetchMonthlyIncome()
   }, [selectedMonth, selectedYear, location.pathname])
+
+  async function fetchMonthlyIncome() {
+    const startDate = new Date(selectedYear, selectedMonth, 1).toISOString().split('T')[0]
+    const endDate   = new Date(selectedYear, selectedMonth + 1, 0).toISOString().split('T')[0]
+
+    const { data } = await supabase
+      .from('income')
+      .select('amount, currency')
+      .eq('user_id', user.id)
+      .gte('date', startDate)
+      .lte('date', endDate)
+
+    const totals = (data || []).reduce((acc, i) => {
+      const sym = currencySymbol(i.currency)
+      acc[sym] = (acc[sym] || 0) + parseFloat(i.amount)
+      return acc
+    }, {})
+
+    setMonthlyIncome(totals)
+  }
 
   async function fetchGroupMembers(groupId) {
     const { data } = await supabase
@@ -293,7 +315,7 @@ export default function DashboardPage() {
         <div style={{ paddingTop: '1.5rem', paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
         <div style={{
           display: 'grid', gridTemplateColumns: '1fr 1fr',
-          gap: '10px', marginTop: '1.5rem',
+          gap: '10px',
         }}>
           <div style={{
             padding: '14px', backgroundColor: 'white',
@@ -333,29 +355,42 @@ export default function DashboardPage() {
       
 
       <div style={{ padding: '1.5rem' }}>
+        {/* ── Budget + Income cards side by side ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '1.5rem' }}>
 
-        {/* ── Budget card — fixed position, always first ── */}
-        <div
-          onClick={() => navigate('/budget')}
-          style={{
-            padding: '14px 16px', backgroundColor: 'white',
-            borderRadius: '12px', border: '1px solid #f1f5f9',
-            cursor: 'pointer', marginBottom: '1.5rem',
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          }}
-        >
-          <div>
-            <p style={{ fontSize: '13px', fontWeight: '600', marginBottom: '4px' }}>
-              📊 Monthly budget
-            </p>
+          {/* Budget card */}
+          <div
+            onClick={() => navigate('/budget')}
+            style={{
+              padding: '14px', backgroundColor: 'white',
+              borderRadius: '12px', border: '1px solid #f1f5f9',
+              cursor: 'pointer',
+            }}
+          >
+            <p style={{ fontSize: '13px', fontWeight: '600', marginBottom: '4px' }}>📊 Budget</p>
             <p style={{ fontSize: '12px', color: '#94a3b8' }}>
               {budgets.length > 0
-                ? `${budgets.length} categor${budgets.length === 1 ? 'y' : 'ies'} · ${currencySymbol(preferredCurrency)}${budgets.reduce((s, b) => s + parseFloat(b.monthly_limit), 0).toFixed(2)} budgeted`
-                : 'Tap to set your budgets'
-              }
+                ? `${budgets.length} categor${budgets.length === 1 ? 'y' : 'ies'}`
+                : 'Not set'}
             </p>
           </div>
-          <span style={{ fontSize: '18px', color: '#94a3b8' }}>›</span>
+
+          {/* Income card */}
+          <div
+            onClick={() => navigate('/income')}
+            style={{
+              padding: '14px', backgroundColor: 'white',
+              borderRadius: '12px', border: '1px solid #f1f5f9',
+              cursor: 'pointer',
+            }}
+          >
+            <p style={{ fontSize: '13px', fontWeight: '600', marginBottom: '4px' }}>💰 Income</p>
+            <p style={{ fontSize: '12px', color: '#16a34a' }}>
+              {Object.keys(monthlyIncome).length > 0
+                ? Object.entries(monthlyIncome).map(([sym, amt]) => `${sym}${amt.toFixed(2)}`).join(' · ')
+                : 'None this month'}
+            </p>
+          </div>
         </div>
 
         {/* ── Category breakdown with budget limits ── */}
