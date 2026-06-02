@@ -55,6 +55,8 @@ export default function BudgetPage() {
   const [savingBudget, setSavingBudget]         = useState(false)
   const [savingFixed, setSavingFixed]           = useState(false)
   const [preferredCurrency, setPreferredCurrency] = useState('EUR')
+  const [monthlyIncome, setMonthlyIncome] = useState({})
+  const [totalSpentWithFixed, setTotalSpentWithFixed] = useState(0)
 
   const months = getLast5Months()
 
@@ -80,12 +82,34 @@ export default function BudgetPage() {
       fetchFixedExpenses(),
       fetchSpendingWithCurrency(currency),
       fetchHistory(currency),
+      fetchMonthlyIncome(),
     ])
 
     setLoading(false)
   }
   // Computed monthKey 
   const selectedMonth = `${selectedYearNum}-${String(selectedMonthNum + 1).padStart(2, '0')}`
+
+  async function fetchMonthlyIncome() {
+    const [year, month] = selectedMonth.split('-')
+    const startDate = `${year}-${month}-01`
+    const endDate   = new Date(year, month, 0).toISOString().split('T')[0]
+
+    const { data } = await supabase
+      .from('income')
+      .select('amount, currency')
+      .eq('user_id', user.id)
+      .gte('date', startDate)
+      .lte('date', endDate)
+
+    const totals = (data || []).reduce((acc, i) => {
+      const sym = currencySymbol(i.currency)
+      acc[sym] = (acc[sym] || 0) + parseFloat(i.amount)
+      return acc
+    }, {})
+
+    setMonthlyIncome(totals)
+  }
 
   //Fetch preffered currency from user profile
   async function fetchPreferredCurrency() {
@@ -135,6 +159,7 @@ export default function BudgetPage() {
     const startDate = `${year}-${month}-01`
     const endDate   = new Date(year, month, 0).toISOString().split('T')[0]
 
+    // Personal expenses only
     const { data: personalData } = await supabase
       .from('expenses')
       .select('amount, category')
@@ -144,6 +169,7 @@ export default function BudgetPage() {
       .gte('date', startDate)
       .lte('date', endDate)
 
+    // Group splits only
     const { data: splitData } = await supabase
       .from('expense_splits')
       .select('amount_owed, expenses(category, date, is_personal, currency)')
@@ -164,67 +190,100 @@ export default function BudgetPage() {
         totals[cat] = (totals[cat] || 0) + parseFloat(s.amount_owed)
       })
 
+    // Fixed expenses removed — they are separate from variable spending
+    // Calculate total including fixed for Income vs Expenses card
+    const variableTotal = Object.values(totals).reduce((sum, v) => sum + v, 0)
+
+    // Fetch fixed for this month to add to total spent
+    const { data: fixedData } = await supabase
+      .from('fixed_expenses')
+      .select('amount')
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+      .eq('currency', currency)
+      .lte('start_date', endDate)
+      .or(`end_date.is.null,end_date.gte.${startDate}`)
+
+    const fixedTotal = (fixedData || []).reduce((sum, f) => sum + parseFloat(f.amount), 0)
+    setTotalSpentWithFixed(variableTotal + fixedTotal)
+
     setSpending(totals)
   }
 
   // Build last 5 months history
   async function fetchHistory(currency) {
-      const history = await Promise.all(
-        months.map(async monthKey => {
-          const [year, month] = monthKey.split('-')
-          const firstDay  = `${year}-${month}-01`
-          const lastDay   = new Date(year, month, 0).toISOString().split('T')[0]
+    if (!currency) return
+    
+    const history = await Promise.all(
+      months.map(async monthKey => {
+        const [year, month] = monthKey.split('-')
+        const firstDay  = `${year}-${month}-01`
+        const lastDay = new Date(year, parseInt(month), 0).toISOString().split('T')[0]
 
-          // Fetch fixed expenses active in this specific month
-          const { data: fixedData } = await supabase
-            .from('fixed_expenses')
-            .select('amount')
-            .eq('user_id', user.id)
-            .eq('is_active', true)
-            .lte('start_date', lastDay)
-            .or(`end_date.is.null,end_date.gte.${firstDay}`)
+        // Fixed expenses active in this month
+        const { data: fixedData } = await supabase
+          .from('fixed_expenses')
+          .select('amount')
+          .eq('user_id', user.id)
+          .eq('is_active', true)
+          .lte('start_date', lastDay)
+          .or(`end_date.is.null,end_date.gte.${firstDay}`)
 
-          const totalFixed = (fixedData || [])
-            .reduce((sum, f) => sum + parseFloat(f.amount), 0)
+        const totalFixed = (fixedData || [])
+          .reduce((sum, f) => sum + parseFloat(f.amount), 0)
 
-          // Variable budgets for this month
-          const { data: budgetData } = await supabase
-            .from('budgets')
-            .select('monthly_limit')
-            .eq('user_id', user.id)
-            .eq('month', monthKey)
+        // Variable budgets for this month
+        const { data: budgetData } = await supabase
+          .from('budgets')
+          .select('monthly_limit')
+          .eq('user_id', user.id)
+          .eq('month', monthKey)
 
-          const totalBudgeted = (budgetData || [])
-            .reduce((sum, b) => sum + parseFloat(b.monthly_limit), 0)
+        const totalBudgeted = (budgetData || [])
+          .reduce((sum, b) => sum + parseFloat(b.monthly_limit), 0)
 
-          // Actual spending for this month — preferred currency only
-          const { data: personalData } = await supabase
-            .from('expenses')
-            .select('amount')
-            .eq('paid_by', user.id)
-            .eq('is_personal', true)
-            .eq('currency', currency)
-            .gte('date', firstDay)
-            .lte('date', lastDay)
+        // Actual spending — preferred currency only
+        const { data: personalData } = await supabase
+          .from('expenses')
+          .select('amount')
+          .eq('paid_by', user.id)
+          .eq('is_personal', true)
+          .eq('currency', currency)
+          .gte('date', firstDay)
+          .lte('date', lastDay)
 
-          const { data: splitData } = await supabase
-            .from('expense_splits')
-            .select('amount_owed, expenses(date, is_personal, currency)')
-            .eq('user_id', user.id)
-            .gte('expenses.date', firstDay)
-            .lte('expenses.date', lastDay)
+        const { data: splitData } = await supabase
+          .from('expense_splits')
+          .select('amount_owed, expenses(date, is_personal, currency)')
+          .eq('user_id', user.id)
+          .gte('expenses.date', firstDay)
+          .lte('expenses.date', lastDay)
 
-          const totalSpent =
-            (personalData || []).reduce((sum, e) => sum + parseFloat(e.amount), 0) +
-            (splitData || [])
-              .filter(s => s.expenses && !s.expenses.is_personal && s.expenses.currency === currency)
-              .reduce((sum, s) => sum + parseFloat(s.amount_owed), 0)
+        const totalSpent =
+          (personalData || []).reduce((sum, e) => sum + parseFloat(e.amount), 0) +
+          (splitData || [])
+            .filter(s => s.expenses && !s.expenses.is_personal && s.expenses.currency === currency)
+            .reduce((sum, s) => sum + parseFloat(s.amount_owed), 0) + totalFixed
 
-          return { monthKey, totalFixed, totalBudgeted, totalSpent }
-        })
-      )
+        // Income for this month — preferred currency only
+        const { data: incomeData } = await supabase
+          .from('income')
+          .select('amount')
+          .eq('user_id', user.id)
+          .eq('currency', currency)
+          .gte('date', firstDay)
+          .lte('date', lastDay)
 
-      setMonthlyHistory(history)
+        const totalIncome = (incomeData || [])
+          .reduce((sum, i) => sum + parseFloat(i.amount), 0)
+
+        const totalSaved = totalIncome - totalSpent
+
+        return { monthKey, totalFixed, totalBudgeted, totalSpent, totalIncome, totalSaved }
+      })
+    )
+
+    setMonthlyHistory(history)
   }
 
   // Save or update a variable budget
@@ -264,60 +323,58 @@ export default function BudgetPage() {
 
   // Save fixed expense
   async function saveFixed(data) {
-      setSavingFixed(true)
+    setSavingFixed(true)
 
-      const [year, month] = selectedMonth.split('-')
-      const firstDayOfMonth = `${year}-${month}-01`
-      const lastDayOfPrevMonth = new Date(year, month - 1, 0).toISOString().split('T')[0]
+    const [year, month] = selectedMonth.split('-')
+    const firstDayOfMonth    = `${year}-${month}-01`
+    const lastDayOfPrevMonth = new Date(year, month - 1, 0).toISOString().split('T')[0]
 
-      try {
-        if (!data.id) {
-          // New fixed expense
-          await supabase.from('fixed_expenses').insert({
-            user_id:    user.id,
-            title:      data.title,
-            amount:     parseFloat(data.amount),
-            currency:   data.currency,
-            category:   data.category,
-            is_active:  true,
-            start_date: data.start_date || firstDayOfMonth,
-            end_date:   null,
-          })
-        } else if (data.updateType === 'from_now') {
-          // Update from this month onwards
-          // 1. Set end_date on current record to last day of previous month
-          await supabase.from('fixed_expenses').update({
-            end_date: lastDayOfPrevMonth,
-          }).eq('id', data.id)
+    try {
+      if (!data.id) {
+        await supabase.from('fixed_expenses').insert({
+          user_id:    user.id,
+          title:      data.title,
+          amount:     parseFloat(data.amount),
+          currency:   data.currency,
+          category:   data.category,
+          is_active:  true,
+          start_date: data.start_date || firstDayOfMonth,
+          end_date:   null,
+        })
 
-          // 2. Create new record from this month
-          await supabase.from('fixed_expenses').insert({
-            user_id:    user.id,
-            title:      data.title,
-            amount:     parseFloat(data.amount),
-            currency:   data.currency,
-            category:   data.category,
-            is_active:  true,
-            start_date: firstDayOfMonth,
-            end_date:   null,
-          })
+      } else if (data.updateType === 'from_now') {
+        await supabase.from('fixed_expenses').update({
+          end_date: lastDayOfPrevMonth,
+        }).eq('id', data.id)
 
-        } else if (data.updateType === 'stop') {
-          // Stop from this month — set end_date to last day of previous month
-          await supabase.from('fixed_expenses').update({
-            end_date: lastDayOfPrevMonth,
-          }).eq('id', data.id)
-        }
+        await supabase.from('fixed_expenses').insert({
+          user_id:    user.id,
+          title:      data.title,
+          amount:     parseFloat(data.amount),
+          currency:   data.currency,
+          category:   data.category,
+          is_active:  true,
+          start_date: firstDayOfMonth,
+          end_date:   null,
+        })
 
-        await fetchFixedExpenses()
-        setEditingFixed(null)
-
-      } catch (err) {
-        console.error(err)
-      } finally {
-        setSavingFixed(false)
+      } else if (data.updateType === 'stop') {
+        await supabase.from('fixed_expenses').update({
+          end_date: lastDayOfPrevMonth,
+        }).eq('id', data.id)
       }
+
+      // Refresh all spending data after fixed expense change
+      await fetchFixedExpenses()
+      await fetchSpendingWithCurrency(preferredCurrency)
+      setEditingFixed(null)
+
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setSavingFixed(false)
     }
+  }
 
   // Totals
   const totalFixed    = fixedExpenses.reduce((sum, f) => sum + parseFloat(f.amount), 0)
@@ -404,6 +461,76 @@ export default function BudgetPage() {
           </div>
         </div>
       </div>
+
+      {/* ── Income vs Expenses summary ── */}
+      {Object.keys(monthlyIncome).length > 0 && (
+        <div style={{
+          padding: '14px', backgroundColor: 'white',
+          borderRadius: '12px', border: '1px solid #f1f5f9',
+        }}>
+          <p style={{ fontSize: '13px', fontWeight: '600', marginBottom: '12px', color: '#64748b' }}>
+            Income vs Expenses
+          </p>
+          {Object.entries(monthlyIncome).map(([sym, incAmt]) => {
+            const spent   = totalSpentWithFixed
+            const saved   = incAmt - spent
+            const isOver  = saved < 0
+            const pct     = incAmt > 0 ? Math.round((saved / incAmt) * 100) : 0
+            const spendingPct = incAmt > 0 ? Math.min(Math.round((spent / incAmt) * 100), 100) : 0
+
+            return (
+              <div key={sym}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+                  <div style={{ textAlign: 'center', flex: 1 }}>
+                    <p style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>Income</p>
+                    <p style={{ fontSize: '18px', fontWeight: '700', color: '#16a34a' }}>
+                      {sym}{incAmt.toFixed(2)}
+                    </p>
+                  </div>
+                  <div style={{ textAlign: 'center', flex: 1 }}>
+                    <p style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>Spent</p>
+                    <p style={{ fontSize: '18px', fontWeight: '700', color: '#dc2626' }}>
+                      {currencySymbol(preferredCurrency)}{spent.toFixed(2)}
+                    </p>
+                  </div>
+                  <div style={{ textAlign: 'center', flex: 1 }}>
+                    {/* Label changes based on over/under */}
+                    <p style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>
+                      {isOver ? 'Over by' : 'Saved'}
+                    </p>
+                    <p style={{ fontSize: '18px', fontWeight: '700', color: isOver ? '#dc2626' : '#0f172a' }}>
+                      {isOver ? '-' : ''}{sym}{Math.abs(saved).toFixed(2)}
+                    </p>
+                  </div>
+                  <div style={{ textAlign: 'center', flex: 1 }}>
+                    <p style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>Saved Rate</p>
+                    <p style={{ fontSize: '18px', fontWeight: '700', color: isOver ? '#dc2626' : pct >= 20 ? '#16a34a' : '#f59e0b' }}>
+                      {isOver ? '-' : ''}{Math.abs(pct)}%
+                    </p>
+                  </div>
+                </div>
+
+                {/* Progress bar — full red when over, green/amber when under */}
+                <div style={{ height: '6px', backgroundColor: '#f1f5f9', borderRadius: '99px' }}>
+                  <div style={{
+                    height: '100%',
+                    width: isOver ? '100%' : `${spendingPct}%`,
+                    backgroundColor: isOver ? '#dc2626' : spendingPct >= 90 ? '#f59e0b' : '#16a34a',
+                    borderRadius: '99px',
+                    transition: 'width 0.4s ease',
+                  }} />
+                </div>
+
+                <p style={{ fontSize: '11px', color: isOver ? '#dc2626' : '#94a3b8', marginTop: '4px', textAlign: 'right' }}>
+                  {isOver
+                    ? `Spending ${Math.abs(pct)}% more than income`
+                    : `Saving ${pct}% of income`}
+                </p>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       <div style={{ padding: '1.5rem' }}>
 
@@ -559,7 +686,7 @@ export default function BudgetPage() {
             {monthlyHistory.map(h => (
               <div
                 key={h.monthKey}
-                onClick={() => setSelectedMonth(h.monthKey)}
+                onClick={() => setSelectedMonthNum(Number(h.monthKey.split('-')[1]) - 1) || setSelectedYearNum(Number(h.monthKey.split('-')[0]))}
                 style={{
                   padding: '12px 14px', backgroundColor: 'white',
                   borderRadius: '12px',
@@ -577,10 +704,13 @@ export default function BudgetPage() {
                     </span>
                   )}
                 </div>
-                <div style={{ display: 'flex', gap: '16px' }}>
+
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                   <div>
                     <p style={{ fontSize: '11px', color: '#94a3b8' }}>Fixed</p>
-                    <p style={{ fontSize: '13px', fontWeight: '500' }}>{currencySymbol(preferredCurrency)}{h.totalFixed.toFixed(2)}</p>
+                    <p style={{ fontSize: '13px', fontWeight: '500' }}>
+                      {currencySymbol(preferredCurrency)}{h.totalFixed.toFixed(2)}
+                    </p>
                   </div>
                   <div>
                     <p style={{ fontSize: '11px', color: '#94a3b8' }}>Spent</p>
@@ -590,12 +720,24 @@ export default function BudgetPage() {
                   </div>
                   <div>
                     <p style={{ fontSize: '11px', color: '#94a3b8' }}>Budgeted</p>
-                    <p style={{ fontSize: '13px', fontWeight: '500' }}>{currencySymbol(preferredCurrency)}{h.totalBudgeted.toFixed(2)}</p>
+                    <p style={{ fontSize: '13px', fontWeight: '500' }}>
+                      {currencySymbol(preferredCurrency)}{h.totalBudgeted.toFixed(2)}
+                    </p>
                   </div>
                   <div>
-                    <p style={{ fontSize: '11px', color: '#94a3b8' }}>Total plan</p>
-                    <p style={{ fontSize: '13px', fontWeight: '500' }}>
-                      {currencySymbol(preferredCurrency)}{(h.totalFixed + h.totalBudgeted).toFixed(2)}
+                    <p style={{ fontSize: '11px', color: '#94a3b8' }}>Income</p>
+                    <p style={{ fontSize: '13px', fontWeight: '500', color: '#16a34a' }}>
+                      {h.totalIncome > 0
+                        ? `${currencySymbol(preferredCurrency)}${h.totalIncome.toFixed(2)}`
+                        : '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p style={{ fontSize: '11px', color: '#94a3b8' }}>Saved</p>
+                    <p style={{ fontSize: '13px', fontWeight: '500', color: h.totalSaved >= 0 ? '#16a34a' : '#dc2626' }}>
+                      {h.totalIncome > 0
+                        ? `${currencySymbol(preferredCurrency)}${h.totalSaved.toFixed(2)}`
+                        : '—'}
                     </p>
                   </div>
                 </div>
