@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import { calculateEqualSplit, validateCustomSplit } from '../utils/splitCalculator'
 import ReceiptUploader from './ReceiptUploader'
 
-const CATEGORIES = ['Food', 'Transport', 'Housing', 'Shopping', 'Health', 'Entertainment', 'Other']
+const CATEGORIES = ['Groceries','Food', 'Transport', 'Housing', 'Shopping', 'Health', 'Entertainment', 'Other']
 const symbols = { EUR: '€', INR: '₹', USD: '$' }
 
 export default function AddGroupExpenseModal({ groupId, members, onClose, onAdded }) {
@@ -12,7 +12,7 @@ export default function AddGroupExpenseModal({ groupId, members, onClose, onAdde
 
   const [title, setTitle]         = useState('')
   const [amount, setAmount]       = useState('')
-  const [category, setCategory]   = useState('Food')
+  const [category, setCategory]   = useState('Groceries')
   const [currency, setCurrency]   = useState('EUR')
   const [date, setDate]           = useState(new Date().toISOString().split('T')[0])
   const [paidBy, setPaidBy]       = useState(user.id)

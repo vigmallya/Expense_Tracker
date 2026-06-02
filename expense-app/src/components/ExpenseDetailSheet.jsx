@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import ReceiptUploader from './ReceiptUploader'
 
-const CATEGORIES = ['Food', 'Transport', 'Housing', 'Shopping', 'Health', 'Entertainment', 'Other']
+const CATEGORIES = ['Groceries','Food', 'Transport', 'Housing', 'Shopping', 'Health', 'Entertainment', 'Other']
 const CATEGORY_COLORS = {
+  Groceries:     '#84cc16',
   Food:          '#f97316',
   Transport:     '#3b82f6',
   Housing:       '#8b5cf6',
@@ -20,7 +21,7 @@ function currencySymbol(code) {
 
 function categoryIcon(cat) {
   const icons = {
-    Food: '🍔', Transport: '🚌', Housing: '🏠',
+    Groceries: '🛒', Food: '🍔', Transport: '🚌', Housing: '🏠',
     Shopping: '🛍', Health: '💊', Entertainment: '🎬', Other: '📦'
   }
   return icons[cat] || '📦'

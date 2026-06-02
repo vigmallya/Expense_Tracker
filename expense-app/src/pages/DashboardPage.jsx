@@ -9,6 +9,7 @@ import QuickAddSheet from '../components/QuickAddSheet'
 import AddGroupExpenseModal from '../components/AddGroupExpenseModal'
 
 const CATEGORY_COLORS = {
+  Groceries:     '#84cc16',
   Food:          '#f97316',
   Transport:     '#3b82f6',
   Housing:       '#8b5cf6',

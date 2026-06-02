@@ -4,14 +4,14 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import BottomNav from '../components/BottomNav'
 
-const CATEGORIES = ['Food', 'Transport', 'Housing', 'Shopping', 'Health', 'Entertainment', 'Other']
+const CATEGORIES = ['Groceries','Food', 'Transport', 'Housing', 'Shopping', 'Health', 'Entertainment', 'Other']
 const symbols    = { EUR: '€', INR: '₹', USD: '$' }
 
 function currencySymbol(code) { return symbols[code] || code }
 
 function categoryIcon(cat) {
   const icons = {
-    Food: '🍔', Transport: '🚌', Housing: '🏠',
+    Groceries: '🛒', Food: '🍔', Transport: '🚌', Housing: '🏠',
     Shopping: '🛍', Health: '💊', Entertainment: '🎬', Other: '📦'
   }
   return icons[cat] || '📦'

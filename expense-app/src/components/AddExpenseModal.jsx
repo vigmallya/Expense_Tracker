@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import ReceiptUploader from './ReceiptUploader'
 
 const CATEGORIES = [
-  'Food', 'Transport', 'Housing',
+  'Groceries','Food', 'Transport', 'Housing',
   'Shopping', 'Health', 'Entertainment', 'Other'
 ]
 
@@ -14,7 +14,7 @@ export default function AddExpenseModal({ onClose, onAdded }) {
   const { user } = useAuth()
   const [title, setTitle]       = useState('')
   const [amount, setAmount]     = useState('')
-  const [category, setCategory] = useState('Food')
+  const [category, setCategory] = useState('Groceries')
   const [date, setDate]         = useState(new Date().toISOString().split('T')[0])
   const [currency, setCurrency] = useState('EUR')
   const [note, setNote]         = useState('')
