@@ -18,9 +18,12 @@ export default function EditGroupExpenseModal({ expense, members, onClose, onEdi
   const [deleting, setDeleting]           = useState(false)
   const [receiptUrl, setReceiptUrl] = useState(expense.receipt_url || '')
   const [note, setNote] = useState(expense.note || '')
-  const [splitType, setSplitType]       = useState('equal')
+  const [splitType, setSplitType] = useState(() => detectSplitType(expense, members))
   const [customSplits, setCustomSplits] = useState(
-    members.reduce((acc, m) => ({ ...acc, [m.id]: '' }), {})
+    members.reduce((acc, m) => {
+      const existing = expense.splits?.find(s => s.user_id === m.id)
+      return { ...acc, [m.id]: existing ? existing.amount_owed.toString() : '' }
+    }, {})
   )
 
   function remaining() {
@@ -31,6 +34,23 @@ export default function EditGroupExpenseModal({ expense, members, onClose, onEdi
 
   function updateCustomSplit(userId, value) {
     setCustomSplits(prev => ({ ...prev, [userId]: value }))
+  }
+
+  function detectSplitType(expense, members) {
+    // If we don't have split data, default to equal
+    if (!expense.splits || expense.splits.length === 0) return 'equal'
+
+    const total     = parseFloat(expense.amount)
+    const count     = members.length
+    const equalShare = parseFloat((total / count).toFixed(2))
+
+    // Check if all non-payer splits are equal
+    const nonPayerSplits = expense.splits.filter(s => s.user_id !== expense.paid_by)
+    const allEqual = nonPayerSplits.every(s =>
+      Math.abs(parseFloat(s.amount_owed) - equalShare) < 0.02
+    )
+
+    return allEqual ? 'equal' : 'custom'
   }
 
   async function handleDelete() {

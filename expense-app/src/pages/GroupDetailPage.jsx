@@ -591,7 +591,10 @@ export default function GroupDetailPage() {
                           ))}
                         </div>
                         <button
-                          onClick={() => setEditingExpense(expense)}
+                          onClick={() => {
+                            const expSplits = splits.filter(s => s.expense_id === expense.id)
+                            setEditingExpense({ ...expense, splits: expSplits })
+                          }}
                           style={{
                             padding: '4px 12px', flexShrink: 0,
                             backgroundColor: 'white', border: '1px solid #e2e8f0',
