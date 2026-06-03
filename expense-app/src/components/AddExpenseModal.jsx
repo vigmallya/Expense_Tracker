@@ -61,6 +61,7 @@ export default function AddExpenseModal({ onClose, onAdded }) {
         backgroundColor: 'white',
         borderRadius: '20px 20px 0 0',
         padding: '1.5rem 1.5rem 2.5rem',
+         maxHeight: '90vh', overflowY: 'auto', 
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
           <h2 style={{ fontSize: '18px', fontWeight: '600' }}>Add expense</h2>
