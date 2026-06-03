@@ -170,7 +170,6 @@ export default function ReceiptUploader({ receiptUrl, onUploaded, onRemoved, rea
         ref={inputRef}
         type="file"
         accept="image/*"
-        capture="environment"
         onChange={handleFile}
         style={{ display: 'none' }}
       />
